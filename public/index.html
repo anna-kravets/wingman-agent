@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Wingman</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 800px; margin: 2rem auto; padding: 0 1rem; }
+  textarea { width: 100%; height: 6rem; font: inherit; }
+  button { margin-top: 0.5rem; padding: 0.5rem 1rem; }
+  .response { white-space: pre-wrap; background: #f4f4f4; padding: 1rem; margin-top: 1rem; border-radius: 4px; }
+  .step { border: 1px solid #ddd; padding: 0.75rem; margin-top: 0.5rem; border-radius: 4px; }
+  .step pre { white-space: pre-wrap; margin: 0.25rem 0; }
+  .turn { margin-top: 1rem; }
+  .turn .prompt { font-weight: bold; }
+  .error { color: #b00020; }
+</style>
+</head>
+<body>
+<h1>Wingman</h1>
+
+<textarea id="prompt" placeholder="Tell Wingman what happened..."></textarea>
+<button id="run">Run Agent</button>
+
+<div id="history"></div>
+
+<script>
+const conversationId = crypto.randomUUID();
+
+const historyEl = document.getElementById("history");
+const promptEl = document.getElementById("prompt");
+const runBtn = document.getElementById("run");
+
+function renderStep(step) {
+  return `<div class="step">
+    <div><strong>${step.module}</strong></div>
+    <div>system_prompt:<pre>${JSON.stringify(step.prompt?.system_prompt ?? "", null, 2)}</pre></div>
+    <div>user_prompt:<pre>${JSON.stringify(step.prompt?.user_prompt ?? "", null, 2)}</pre></div>
+    <div>response:<pre>${JSON.stringify(step.response, null, 2)}</pre></div>
+  </div>`;
+}
+
+async function runAgent() {
+  const prompt = promptEl.value.trim();
+  if (!prompt) return;
+
+  runBtn.disabled = true;
+  try {
+    const res = await fetch("/api/execute", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt, conversation_id: conversationId }),
+    });
+    const data = await res.json();
+
+    const turn = document.createElement("div");
+    turn.className = "turn";
+
+    if (data.status === "ok") {
+      turn.innerHTML = `
+        <div class="prompt">${prompt}</div>
+        <div class="response">${data.response}</div>
+        ${(data.steps || []).map(renderStep).join("")}
+      `;
+    } else {
+      turn.innerHTML = `
+        <div class="prompt">${prompt}</div>
+        <div class="error">Error: ${data.error}</div>
+      `;
+    }
+    historyEl.appendChild(turn);
+    promptEl.value = "";
+  } finally {
+    runBtn.disabled = false;
+  }
+}
+
+runBtn.addEventListener("click", runAgent);
+</script>
+</body>
+</html>

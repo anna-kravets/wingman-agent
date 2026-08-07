@@ -48,13 +48,10 @@ and the Supervisor concatenates these into `/api/execute`'s `steps[]` in call or
 
 ### Phase 0 — Lock decisions + scaffold (day 0–1)
 - [x] Resolve all items in §0 (except flights/hotels data source — still open, §7)
-- [ ] Repo structure agreed (not created yet):
+- [x] Repo structure agreed and scaffolded:
   ```
-  /api                              → Vercel Python serverless functions (one deliverable endpoint each)
-    team_info.py
-    agent_info.py
-    model_architecture.py
-    execute.py
+  /api
+    index.py                        → single FastAPI entrypoint (see note below); all endpoints as routes
   /lib
     agents/
       supervisor.py
@@ -76,16 +73,16 @@ and the Supervisor concatenates these into `/api/execute`'s `steps[]` in call or
   CLAUDE.md                         → root, shared context for all Claude Code sessions
   .env.example
   ```
-- [ ] Framework choice within Python (Flask/FastAPI vs. bare handler functions) and exact `vercel.json` routing — decide when scaffolding, not blocking today's decisions
-- [ ] Step-object schema agreed and written down (§1 contract)
+- [x] Framework choice within Python (Flask/FastAPI vs. bare handler functions) and exact `vercel.json` routing — **decided (revised after live deploy testing, see decisions log): single FastAPI `app` in `api/index.py`**, not one bare-handler file per endpoint. Vercel's current Python runtime failed to zero-config-detect multiple `handler`-per-file functions under `/api` (confirmed empirically against a real deploy, contradicting what the general docs implied); a single ASGI entrypoint is the platform's actual supported path today. `vercel.json` sets `outputDirectory: public` + `functions["api/index.py"].maxDuration: 60`.
+- [x] Step-object schema agreed and written down (§1 contract)
 
 ### Phase 1 — Skeleton (day 1–4)
-- [ ] Repo scaffold (Python + `vercel.json`), deploy empty shell to Vercel immediately (catch dev/prod drift early — guidelines explicitly require parity)
-- [ ] `GET /api/team_info` (trivial, static response)
-- [ ] `POST /api/execute` stub — real response shape, empty `steps`, wired to a `Supervisor` stub, accepts optional `conversation_id` for multi-turn
-- [ ] GUI shell — textarea, "Run Agent" button, response display, steps trace display, conversation history display, no auth
-- [ ] Shared step-logger utility so all agents log consistently
-- [ ] Supabase table for conversation history (`conversation_id`, turn history) — multi-turn is required, plumb it in from the start rather than retrofitting
+- [x] Repo scaffold (Python + `vercel.json`) done; empty shell deployed to Vercel — preview and **production** both live and verified (GUI, `/api/team_info`, `/api/execute` all return 200, no auth guard). Production: https://project-eight-chi-97.vercel.app
+- [~] `GET /api/team_info` implemented, returns placeholder data — needs real team name / batch-order# / student names+emails before submission
+- [x] `POST /api/execute` stub — real response shape, empty `steps`, wired to a `Supervisor` stub, accepts optional `conversation_id` for multi-turn
+- [x] GUI shell — textarea, "Run Agent" button, response display, steps trace display, conversation history display, no auth (`conversation_id` generated client-side, since the locked `/api/execute` response shape has no room to hand one back)
+- [x] Shared step-logger utility so all agents log consistently (`lib/steps.py`)
+- [~] Supabase table for conversation history (`conversation_id`, turn history) — schema written (`docs/schema.sql`) and `lib/conversation.py` client built; actual Supabase project not yet created, so untested end-to-end
 
 ### Phase 2 — Agent builds, parallel (day 4–10)
 - [ ] **Supervisor:** question-refinement system prompt (elicit missing details from stressed/underspecified first message), dispatch logic, date-sync between Flight/Accommodation calls
@@ -120,7 +117,7 @@ and the Supervisor concatenates these into `/api/execute`'s `steps[]` in call or
 |---|---|---|
 | GitHub repo | Private, all 3 as collaborators. Not created yet — `.gitignore` review pending, then push. | |
 | Root `CLAUDE.md` | Carry over the existing project-level one so every teammate's Claude Code session shares context; updated for Python stack + required multi-turn. | |
-| Vercel project | Link to repo once created, invite other 2, set env vars. | |
+| Vercel project | Linked (`anna-kravets-projects/project`), GitHub repo connected for auto-deploy. Prod: https://project-eight-chi-97.vercel.app. Still need: invite other 2 teammates, set env vars. | Person A |
 | LLMod.ai API key | One member creates it — shared across the whole group automatically per spec. Goes in Vercel env + local `.env` (never committed; add `.env.example`). | |
 | Supabase project | Schema needed for: conversation history (multi-turn, required) + execution logs. | |
 | Pinecone index | Dimension must match `text-embedding-3-small` (1536). Decide namespace/metadata-filter strategy (`airline` field) before DocumentationAgent work starts. | |
@@ -161,6 +158,9 @@ Retrieval must be scoped/filtered by airline to avoid irrelevant CoC clauses blo
 | 7/8/2026 | Multi-turn support: required | Conversational follow-up is the stated justification for using agents over plain API calls — team wants it demonstrated, not just claimed. |
 | 7/8/2026 | No dedicated task tracker | Team decision — coordinate directly given the small team size. |
 | 7/8/2026 | No dedicated comms channel | Team decision — coordinate directly. |
+| 7/8/2026 | Python runtime: **superseded same day** — see next row | Initial plan was bare stdlib `BaseHTTPRequestHandler` per `api/*.py`, no framework. Reverted after live deploy testing. |
+| 7/8/2026 | Python runtime (final): single FastAPI `app` in `api/index.py`, all endpoints as routes on it | Live `vercel deploy` rejected multiple separate `handler`-per-file functions under `/api` ("No python entrypoint found in default locations") even though general Vercel docs describe that as supported — empirically only a single recognized entrypoint (`app.py`/`index.py`/etc., or `tool.vercel.entrypoint`) builds reliably right now. FastAPI is the documented, currently-working pattern; adds one small dependency. |
+| 7/8/2026 | `conversation_id` is generated client-side (GUI) and passed on every `/api/execute` call, not returned by the server | The response shape is locked to exactly `{status, error, response, steps}` — no field to hand a server-generated id back through. |
 
 ---
 
