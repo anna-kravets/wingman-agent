@@ -32,7 +32,18 @@ usage = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0}
 
 
 class LLMError(RuntimeError):
-    pass
+    """A call failed. `steps` carries the trace entry for it.
+
+    The spec requires `steps[]` to describe *every* LLM call in order, and a call
+    that was made and then failed is still a call. Raising bare would silently drop
+    it from the trace, so the step travels with the exception and the Supervisor
+    appends it (see `supervisor.dispatch`). Empty only when no call was attempted —
+    a missing API key, say.
+    """
+
+    def __init__(self, message: str, steps: list[dict] | None = None):
+        super().__init__(message)
+        self.steps = steps or []
 
 
 def _config() -> tuple[str, str]:
@@ -72,6 +83,10 @@ def call(
     if expect_json:
         body["response_format"] = {"type": "json_object"}
 
+    def failed(reason: str) -> LLMError:
+        step = make_step(module, system_prompt, user_prompt, {"error": reason})
+        return LLMError(f"{module}: {reason}", steps=[step])
+
     try:
         http_response = httpx.post(
             f"{base}/chat/completions",
@@ -83,9 +98,9 @@ def call(
         data = http_response.json()
         text = data["choices"][0]["message"]["content"]
     except httpx.HTTPError as exc:
-        raise LLMError(f"{module}: LLM request failed — {exc}") from exc
+        raise failed(f"LLM request failed — {exc}") from exc
     except (KeyError, IndexError, ValueError) as exc:
-        raise LLMError(f"{module}: unexpected response from the LLM — {exc}") from exc
+        raise failed(f"unexpected response from the LLM — {exc}") from exc
 
     counts = data.get("usage") or {}
     usage["calls"] += 1
@@ -96,7 +111,7 @@ def call(
         try:
             parsed = json.loads(text)
         except json.JSONDecodeError as exc:
-            raise LLMError(f"{module}: expected JSON, got {text[:200]!r}") from exc
+            raise failed(f"expected JSON, got {text[:200]!r}") from exc
         return parsed, make_step(module, system_prompt, user_prompt, parsed)
 
     return text, make_step(module, system_prompt, user_prompt, {"text": text})

@@ -214,6 +214,11 @@ def run(prompt: str, history: list[dict]) -> tuple[str, list[dict]]:
             results[key] = payload
             steps.extend(agent_steps)
         except Exception as exc:
+            # A call that was made and then failed is still a call, and the spec wants
+            # every one of them in `steps`. lib.llm.LLMError carries the failed call's
+            # step; an agent that got partway through several calls attaches the ones
+            # that already succeeded (see documentation_agent).
+            steps.extend(getattr(exc, "steps", []))
             failures.append(f"{label} ({exc})")
 
     if "flight" in needs:

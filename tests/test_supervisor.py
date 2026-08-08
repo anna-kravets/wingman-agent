@@ -153,6 +153,40 @@ def test_one_agent_failing_does_not_lose_the_rest_of_the_plan(monkeypatch):
     assert "DocumentationAgent" not in modules_of(steps)
 
 
+def test_a_failed_call_still_appears_in_the_trace(monkeypatch):
+    from lib.llm import LLMError
+    from lib.steps import make_step
+
+    failed_step = make_step("DocumentationAgent", "sys", "user", {"error": "timed out"})
+
+    def fail(*args, **kwargs):
+        raise LLMError("DocumentationAgent: timed out", steps=[failed_step])
+
+    monkeypatch.setattr(documentation_agent, "run", fail)
+    _, steps = supervisor.run(COMPLETE, [])
+
+    assert failed_step in steps
+    assert modules_of(steps).count("DocumentationAgent") == 1
+
+
+def test_calls_that_succeeded_before_a_failure_are_kept(monkeypatch):
+    from lib.llm import LLMError
+    from lib.steps import make_step
+
+    drafted = make_step("DocumentationAgent", "draft", "user", {"ok": True})
+    critiqued = make_step("DocumentationAgent", "critique", "user", {"error": "timed out"})
+
+    def fail_halfway(*args, **kwargs):
+        raise LLMError("DocumentationAgent: timed out", steps=[drafted, critiqued])
+
+    monkeypatch.setattr(documentation_agent, "run", fail_halfway)
+    _, steps = supervisor.run(COMPLETE, [])
+
+    # Both the successful draft and the failed critique survive, in order.
+    assert steps.index(drafted) < steps.index(critiqued)
+    assert modules_of(steps).count("DocumentationAgent") == 2
+
+
 def test_a_failing_flight_search_skips_the_stay_rather_than_guessing_nights(monkeypatch):
     from lib.agents import flight_agent
 

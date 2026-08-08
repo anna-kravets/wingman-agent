@@ -7,6 +7,11 @@ out the nights from the flight FlightAgent actually found, so this agent never h
 guess them.
 
 STUB — see `IS_STUB`. Person B replaces the body of `run()`.
+
+While it is a stub the step below describes an LLM call that never happened — the
+trace is the right *shape* but is not a true record. The spec requires `steps[]` to
+describe every call actually made, so this must not ship: it stops being fiction the
+moment `run()` calls through `lib/llm.py` for real.
 """
 
 from lib.steps import make_step

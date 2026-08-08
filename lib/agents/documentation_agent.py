@@ -12,6 +12,11 @@ possible, or the leverage is invisible to the passenger.
 STUB — see `IS_STUB`. Person C replaces the body of `run()` with the real loop over
 the Pinecone index (`lib/rag/`, not written yet), retrieval filtered by airline so
 irrelevant carriers' clauses do not bloat the context.
+
+While it is a stub the three steps below describe LLM calls that never happened — the
+trace is the right *shape* but is not a true record. The spec requires `steps[]` to
+describe every call actually made, so this must not ship: it stops being fiction the
+moment `run()` calls through `lib/llm.py` for real.
 """
 
 from lib.steps import make_step
@@ -84,9 +89,22 @@ def run(request: dict, history: list[dict]) -> tuple[dict, list[dict]]:
     """Returns (payload, steps). Three steps: draft, critique, refine."""
     user_prompt = _user_prompt(request, history)
 
-    # Person C: replace everything below with the real loop.
+    # Person C: replace everything below with the real loop and drop IS_STUB.
     # Retrieval goes here first (filtered by request["airline"]), then draft ->
     # critique -> refine via lib.llm.call(...).
+    #
+    # This is the only agent that makes several calls, so it is the only one that can
+    # fail halfway. When it does, hand back the steps that already succeeded — the
+    # Supervisor reads `exc.steps`, and the spec wants every call that happened:
+    #
+    #     steps = []
+    #     try:
+    #         draft, step = llm.call(MODULE, DRAFT_SYSTEM_PROMPT, user_prompt, expect_json=True)
+    #         steps.append(step)
+    #         ...
+    #     except LLMError as exc:
+    #         exc.steps = steps + exc.steps
+    #         raise
     draft = {
         "regulation": "EU 261/2004",
         "entitlements": [

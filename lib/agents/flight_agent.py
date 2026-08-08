@@ -6,6 +6,11 @@ STUB — see `IS_STUB`. Returns canned options without calling the LLM so the
 Supervisor and the full `/api/execute` trace can be exercised before the LLMod key
 exists. Person B replaces the body of `run()`; the prompts, signature and payload
 shape are already what the real version should use, so nothing around it changes.
+
+While it is a stub the step below describes an LLM call that never happened — the
+trace is the right *shape* but is not a true record. The spec requires `steps[]` to
+describe every call actually made, so this must not ship: it stops being fiction the
+moment `run()` calls through `lib/llm.py` for real.
 """
 
 from datetime import datetime, timedelta

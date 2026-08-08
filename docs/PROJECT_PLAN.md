@@ -148,7 +148,7 @@ drop the flag. Nothing around it changes. `pytest` covers the whole path and nee
 - [~] **FlightAgent:** role prompt + one-shot example written; stub returns the payload shape. Person B replaces `run()`.
 - [~] **AccommodationAgent:** role prompt + one-shot example written; stub returns the payload shape, for the nights the Supervisor derives from the chosen flight. Person B replaces `run()`.
 - [ ] **Data pipeline** (start early — blocks DocumentationAgent): collect EU261 + US DOT text, 3–5 airline CoCs, chunk, embed via `text-embedding-3-small` (1536-dim), upsert to Pinecone with an `airline` metadata field for filtered retrieval
-- [~] **DocumentationAgent:** draft / critique / refine prompts written; stub emits all three steps so the trace shape is right. Person C replaces `run()` with the real loop over the RAG index, scoped/filtered by airline. Cap at one critique pass — this agent is 3 of the ~7 calls per turn.
+- [~] **DocumentationAgent:** draft / critique / refine prompts written; stub emits all three steps so the trace shape is right. Person C replaces `run()` with the real loop over the RAG index, scoped/filtered by airline. 
 
 ### Phase 3 — Integration (day 10–13)
 - [~] Supervisor calls all 3 sub-agents, aggregates response, produces full end-to-end `steps` trace — working against the stubs and covered by `tests/`. Re-verify as each real agent lands.
@@ -212,6 +212,23 @@ Retrieval must be scoped/filtered by airline to avoid irrelevant CoC clauses blo
 
 ---
 
+## 5a. To settle together once the first real agent lands
+
+Judgment calls taken unilaterally to keep the build moving, that the team should actually agree on.
+Deliberately deferred: they are easier to argue about with a working agent in front of you than in
+the abstract. Raise these at the first integration checkpoint and log whatever is decided in §6.
+
+- **Does a partial failure return `status: "ok"` or `status: "error"`?** Currently **`ok`**: if
+  DocumentationAgent falls over but FlightAgent and AccommodationAgent succeeded, the passenger gets
+  the flight and the bed, plus a line saying the entitlements could not be worked out. The reasoning
+  is that they got a usable answer, and erroring would throw away good work over one failed leg. The
+  competing reading is that any internal failure is an error and `status` should say so — the
+  guidelines do not address partial success either way. If the team prefers the strict reading it is
+  a small change in one place (`supervisor.run`'s failure handling plus `api/index.py`). Whichever
+  we pick, `/api/agent_info`'s description should match it.
+
+---
+
 ## 6. Decisions log
 
 > Adding a row that **reverses** an earlier decision? This log is not the only place decisions are
@@ -229,6 +246,7 @@ Retrieval must be scoped/filtered by airline to avoid irrelevant CoC clauses blo
 | 7/8/2026 | Python runtime (final): single FastAPI `app` in `api/index.py`, all endpoints as routes on it | Live `vercel deploy` rejected multiple separate `handler`-per-file functions under `/api` ("No python entrypoint found in default locations") even though general Vercel docs describe that as supported — empirically only a single recognized entrypoint (`app.py`/`index.py`/etc., or `tool.vercel.entrypoint`) builds reliably right now. FastAPI is the documented, currently-working pattern; adds one small dependency. |
 | 7/8/2026 | `conversation_id` is generated client-side (GUI) and passed on every `/api/execute` call, not returned by the server | The response shape is locked to exactly `{status, error, response, steps}` — no field to hand a server-generated id back through. |
 | 8/8/2026 | Conversation history is loaded by `api/index.py` and passed in as a list: `supervisor.run(prompt, history)`. Agents never touch the store. | Considered the alternative of giving the Supervisor the `conversation_id` and letting it query Supabase itself. Rejected: agent code would then depend on a database that does not exist yet, blocking Person B and Person C from testing against real history. With the list passed in, `run()` is a pure function testable with a literal. The one real argument for the other shape — fetching selectively to control cost — is a *shaping* decision the Supervisor can still make on a list it was handed, with no DB access needed. Whichever side loads it, only one may: the earlier code did both, which is how the loaded history ended up discarded. |
+| 8/8/2026 | A failed LLM call still produces a `steps` entry. `lib.llm.LLMError` carries it on `.steps`; the Supervisor appends whatever the exception brings. An agent that makes several calls attaches the ones that already succeeded (`exc.steps = steps + exc.steps`) | The spec says `steps[]` describes **every** LLM call the agent made, in order — a call that was sent and then failed or came back unparseable is still a call. Raising bare dropped it from the trace entirely, and would have silently lost the first two calls of a DocumentationAgent reflection loop that died on the third. |
 | 8/8/2026 | **Interface contract revised** (§1): agents return `(payload, steps)`, not a single step object | The original shape assumed one LLM call per agent. DocumentationAgent's reflection loop is three calls and must emit three `steps` entries, so a single step object could not express it — and the spec requires every LLM call to appear. Splitting the structured result (`payload`, for the Supervisor) from the trace (`steps`, for `/api/execute`) fixes it for every agent, not just that one. Checked `CLAUDE.md` for the old wording per §7; it never restated the contract, so no change was needed there. |
 | 8/8/2026 | Conversation state is best-effort: `load_history`/`save_history` no-op when `SUPABASE_URL`/`SUPABASE_KEY` are unset | The GUI sends a `conversation_id` on every call, so an unconfigured (or briefly unreachable) Supabase turned every single GUI request into `status: "error"`. Degrading to single-turn keeps the agent usable; multi-turn enables itself once the env vars exist, with no code change. |
 
