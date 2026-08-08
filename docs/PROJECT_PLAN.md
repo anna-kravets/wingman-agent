@@ -42,6 +42,14 @@ Split by agent boundary so each person owns a clean interface and integration ha
 ```
 and the Supervisor concatenates these into `/api/execute`'s `steps[]` in call order.
 
+**Supervisor entry point** (built against by `api/index.py`, do not change unilaterally):
+```python
+supervisor.run(prompt: str, history: list[dict]) -> tuple[str, list[dict]]   # -> (response_text, steps)
+```
+`history` is the conversation's prior turns, `[{"prompt": ..., "response": ...}, ...]`, oldest
+first, already loaded by the caller — agent code never touches Supabase. The Supervisor decides how
+much of it reaches a prompt (§7).
+
 ---
 
 ## 2. Phases
@@ -67,13 +75,15 @@ and the Supervisor concatenates these into `/api/execute`'s `steps[]` in call or
   /data                              → raw regs + CoC source docs
   /public
     index.html                      → GUI: textarea, Run Agent button, response + steps trace, conversation history
+                                      (served by the CDN in prod; mounted by the app for local dev)
+  /architecture_diagram              → SVG source + the PNG served by /api/model_architecture
   /docs                              → this file, decisions log
   requirements.txt
-  vercel.json                       → routes /api/*.py, static-serves /public
+  vercel.json                       → single FastAPI entrypoint, static-serves /public
   CLAUDE.md                         → root, shared context for all Claude Code sessions
   .env.example
   ```
-- [x] Framework choice within Python (Flask/FastAPI vs. bare handler functions) and exact `vercel.json` routing — **decided (revised after live deploy testing, see decisions log): single FastAPI `app` in `api/index.py`**, not one bare-handler file per endpoint. Vercel's current Python runtime failed to zero-config-detect multiple `handler`-per-file functions under `/api` (confirmed empirically against a real deploy, contradicting what the general docs implied); a single ASGI entrypoint is the platform's actual supported path today. `vercel.json` sets `outputDirectory: public` + `functions["api/index.py"].maxDuration: 60`.
+- [x] Framework choice within Python (Flask/FastAPI vs. bare handler functions) and exact `vercel.json` routing — **decided (revised after live deploy testing, see decisions log): single FastAPI `app` in `api/index.py`**, not one bare-handler file per endpoint. Vercel's current Python runtime failed to zero-config-detect multiple `handler`-per-file functions under `/api` (confirmed empirically against a real deploy, contradicting what the general docs implied); a single ASGI entrypoint is the platform's actual supported path today. `vercel.json` sets `outputDirectory: public` + `functions["api/index.py"]` with `maxDuration: 300` (the platform max, headroom for the reflection loop) and `includeFiles: "architecture_diagram/**"` so the PNG ships inside the function bundle.
 - [x] Step-object schema agreed and written down (§1 contract)
 
 ### Phase 1 — Skeleton (day 1–4)
@@ -101,7 +111,7 @@ and the Supervisor concatenates these into `/api/execute`'s `steps[]` in call or
 - [ ] Budget check: log $ per call, confirm total dev+test spend stays well under $13. Cap the reflection loop to one critique pass — Supervisor + FlightAgent + AccommodationAgent + DocumentationAgent(draft+critique+refine) is already ~5–7 LLM calls per user turn.
 
 ### Phase 4 — Test + submit (day 13–16, includes buffer)
-- [ ] Local + Vercel prod parity test (explicit spec requirement)
+- [~] Local + Vercel prod parity test (explicit spec requirement) — local dev now works (`uvicorn api.index:app --reload`, see README) and the scaffold was checked endpoint-by-endpoint against prod on 8/8/2026. Re-run once the agents are in.
 - [ ] Timing check: full `/api/execute` completes well under the 300s serverless limit
 - [ ] Module-name consistency pass: diagram vs. `steps` vs. `agent_info` text
 - [ ] **Make the GitHub repo public** (currently private — `api.github.com/repos/anna-kravets/wingman-agent` returns 404 to anyone not on the repo). The submission is a bare repo URL with no invite step, so a private repo means the grader opens a 404. Do this before submitting, and re-check it from a logged-out browser afterwards.
@@ -117,9 +127,9 @@ and the Supervisor concatenates these into `/api/execute`'s `steps[]` in call or
 
 | Resource | Notes | Owner |
 |---|---|---|
-| GitHub repo | Private, all 3 as collaborators. Not created yet — `.gitignore` review pending, then push. | |
+| GitHub repo | Created and pushed: https://github.com/anna-kravets/wingman-agent, connected to Vercel for auto-deploy on `main`. Currently **private** — must be made public before submission (Phase 4). | |
 | Root `CLAUDE.md` | Carry over the existing project-level one so every teammate's Claude Code session shares context; updated for Python stack + required multi-turn. | |
-| Vercel project | Linked (`anna-kravets-projects/project`), GitHub repo connected for auto-deploy. Prod: https://project-eight-chi-97.vercel.app. Still need: invite other 2 teammates, set env vars. | Person A |
+| Vercel project | Linked (project `wingman-agent`), GitHub repo connected for auto-deploy. Prod: https://project-eight-chi-97.vercel.app. Still need: invite other 2 teammates, set env vars. | Person A |
 | LLMod.ai API key | One member creates it — shared across the whole group automatically per spec. Goes in Vercel env + local `.env` (never committed; add `.env.example`). | |
 | Supabase project | Schema needed for: conversation history (multi-turn, required) + execution logs. | |
 | Pinecone index | Dimension must match `text-embedding-3-small` (1536). Decide namespace/metadata-filter strategy (`airline` field) before DocumentationAgent work starts. | |
@@ -174,4 +184,4 @@ Retrieval must be scoped/filtered by airline to avoid irrelevant CoC clauses blo
 - Reflection loop cost: needs a hard iteration cap decided during DocumentationAgent design, not discovered during a budget overrun.
 - **Unbounded conversation history is a budget risk — decide the cap in Phase 2, before the Supervisor prompt is written.** The route hands the Supervisor every prior turn. If the Supervisor pastes all of it into the prompt, turn N carries N−1 turns of text, so the token cost of a conversation grows quadratically with its length, not linearly. That is multiplied again by the ~5–7 LLM calls each turn already makes. A demo where someone asks four or five follow-ups — exactly the conversational-follow-up story that justifies agents over plain API calls — is where this bites, and $13 is shared across the whole team for the whole project. Options: a fixed last-N turns (simplest, start here), or a running summary the Supervisor maintains. The cap belongs in the Supervisor, since it owns what goes into a prompt; the caller just supplies the full list.
 - Multi-turn is now required (not optional): needs a concrete state model — `conversation_id` + history in Supabase (Person A owns this) — decided once at Phase 1, not re-litigated per PR. Adds a call to load/persist history on every `/api/execute` turn — factor into the $13 budget.
-- Python-on-Vercel routing approach (single WSGI/ASGI app + `vercel.json` rewrites vs. one function per `/api/*.py` file) not yet chosen — resolve when scaffolding in Phase 1.
+- ~~Python-on-Vercel routing approach~~ — **resolved 7/8/2026**: single FastAPI ASGI app in `api/index.py`. See the decisions log (§6).

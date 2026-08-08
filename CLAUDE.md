@@ -100,11 +100,18 @@ from:
 
 ## 6. Open questions to resolve before/while building
 
-- **Resolved (7/8/2026):** Multi-turn is required, not optional (see §5). Implementation: `POST
-  /api/execute` accepts an optional `conversation_id`; the Supervisor loads prior turn history from
-  Supabase, appends the new turn, and persists it back. GUI passes the `conversation_id` it received
-  back on follow-up calls and renders the running history. This shapes the Supervisor's interface —
-  build it from Phase 1, don't retrofit.
+- **Resolved (7/8/2026, implementation revised 8/8/2026):** Multi-turn is required, not optional
+  (see §5). `POST /api/execute` accepts an optional `conversation_id`; **`api/index.py` loads that
+  conversation's prior turns and passes them in as a list — `Supervisor.run(prompt, history)` —
+  then persists the new turn.** Agent code never touches the store, which keeps it testable
+  without Supabase; the Supervisor decides how much of `history` goes into a prompt (cap it, see
+  `docs/PROJECT_PLAN.md` §7). Do **not** give the Supervisor the `conversation_id` and have it
+  query Supabase itself — that shape was considered and rejected (rationale in the decisions log,
+  `docs/PROJECT_PLAN.md` §6). Persistence is best-effort: with no Supabase env vars it no-ops and
+  every call behaves as a single turn. The GUI generates the `conversation_id` itself and sends it
+  on every call (the locked response shape has no field to return a server-generated one) and
+  renders the running history. This shapes the Supervisor's interface — build it from Phase 1,
+  don't retrofit.
 - Which airlines' CoC documents to actually collect for the RAG corpus (only AA was sourced during
   Assignment 2) — still open.
 - Flights/hotels data source (mock vs. free-tier real API) — still open, see `docs/PROJECT_PLAN.md` §7.
