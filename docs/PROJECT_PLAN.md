@@ -78,7 +78,7 @@ and the Supervisor concatenates these into `/api/execute`'s `steps[]` in call or
 
 ### Phase 1 — Skeleton (day 1–4)
 - [x] Repo scaffold (Python + `vercel.json`) done; empty shell deployed to Vercel — preview and **production** both live and verified (GUI, `/api/team_info`, `/api/execute` all return 200, no auth guard). Production: https://project-eight-chi-97.vercel.app
-- [~] `GET /api/team_info` implemented, returns placeholder data — needs real team name / batch-order# / student names+emails before submission
+- [x] `GET /api/team_info` implemented with real data (`2_6`, team `Wingman`, all 3 students) — verified in prod
 - [x] `POST /api/execute` stub — real response shape, empty `steps`, wired to a `Supervisor` stub, accepts optional `conversation_id` for multi-turn
 - [x] GUI shell — textarea, "Run Agent" button, response display, steps trace display, conversation history display, no auth (`conversation_id` generated client-side, since the locked `/api/execute` response shape has no room to hand one back)
 - [x] Shared step-logger utility so all agents log consistently (`lib/steps.py`)
@@ -86,6 +86,7 @@ and the Supervisor concatenates these into `/api/execute`'s `steps[]` in call or
 
 ### Phase 2 — Agent builds, parallel (day 4–10)
 - [ ] **Supervisor:** question-refinement system prompt (elicit missing details from stressed/underspecified first message), dispatch logic, date-sync between Flight/Accommodation calls
+  - [ ] **Decide the history cap** (see §7): `supervisor.run(prompt, history)` receives every prior turn. Pick how many actually go into the prompt — a fixed last-N, or a running summary — and implement it in the Supervisor, not the caller.
 - [ ] **FlightAgent:** role prompt + one-shot example of a flight-search result, conversational follow-up (compare options, check terms)
 - [ ] **AccommodationAgent:** role prompt + one-shot example of a booking result, matched to the dates FlightAgent returns, conversational follow-up (e.g. meals included)
 - [ ] **Data pipeline** (start early — blocks DocumentationAgent): collect EU261 + US DOT text, 3–5 airline CoCs, chunk, embed via `text-embedding-3-small` (1536-dim), upsert to Pinecone with an `airline` metadata field for filtered retrieval
@@ -93,16 +94,17 @@ and the Supervisor concatenates these into `/api/execute`'s `steps[]` in call or
 
 ### Phase 3 — Integration (day 10–13)
 - [ ] Supervisor calls all 3 sub-agents, aggregates response, produces full end-to-end `steps` trace
-- [ ] `GET /api/agent_info` — `description`, `purpose`, `prompt_template`, `prompt_examples[]`. Capture `full_response`/`steps` from an actual run — cannot be fabricated.
-- [ ] `GET /api/model_architecture` — PNG diagram, module names matching `steps` and docs exactly. Clarity over polish; doesn't need pitch-deck production values.
-- [ ] Error path: `{ "status": "error", "error": "...", "response": null, "steps": [] }`
-- [ ] Multi-turn end-to-end: GUI sends prior `conversation_id`, Supervisor loads history from Supabase, agents see prior context on follow-ups (e.g. "can I take my ski bag on the 09:40?")
+- [ ] `GET /api/agent_info` — only `prompt_examples[]` is blocked on the agents: `full_response`/`steps` must come from an actual run and cannot be fabricated. `description`, `purpose` and `prompt_template` describe the product, not the code, so they can be written and the route shipped before Phase 2 lands.
+- [x] `GET /api/model_architecture` — PNG served with `Content-Type: image/png`, `includeFiles` set in `vercel.json` so it ships in the function bundle; verified in prod. Diagram labels match the locked module names.
+- [x] Error path: `{ "status": "error", "error": "...", "response": null, "steps": [] }` — input validated before dispatch, unexpected failures wrapped in a readable sentence; verified in prod.
+- [~] Multi-turn end-to-end: GUI sends prior `conversation_id`, the route loads history and passes it to `supervisor.run(prompt, history)`, agents see prior context on follow-ups (e.g. "can I take my ski bag on the 09:40?"). Plumbing done and tested against a fake store; **untested against real Supabase** — persistence no-ops until the env vars exist.
 - [ ] Budget check: log $ per call, confirm total dev+test spend stays well under $13. Cap the reflection loop to one critique pass — Supervisor + FlightAgent + AccommodationAgent + DocumentationAgent(draft+critique+refine) is already ~5–7 LLM calls per user turn.
 
 ### Phase 4 — Test + submit (day 13–16, includes buffer)
 - [ ] Local + Vercel prod parity test (explicit spec requirement)
 - [ ] Timing check: full `/api/execute` completes well under the 300s serverless limit
 - [ ] Module-name consistency pass: diagram vs. `steps` vs. `agent_info` text
+- [ ] **Make the GitHub repo public** (currently private — `api.github.com/repos/anna-kravets/wingman-agent` returns 404 to anyone not on the repo). The submission is a bare repo URL with no invite step, so a private repo means the grader opens a 404. Do this before submitting, and re-check it from a logged-out browser afterwards.
 - [ ] Submit — exact format:
   ```
   Vercel URL: {url}
@@ -161,6 +163,8 @@ Retrieval must be scoped/filtered by airline to avoid irrelevant CoC clauses blo
 | 7/8/2026 | Python runtime: **superseded same day** — see next row | Initial plan was bare stdlib `BaseHTTPRequestHandler` per `api/*.py`, no framework. Reverted after live deploy testing. |
 | 7/8/2026 | Python runtime (final): single FastAPI `app` in `api/index.py`, all endpoints as routes on it | Live `vercel deploy` rejected multiple separate `handler`-per-file functions under `/api` ("No python entrypoint found in default locations") even though general Vercel docs describe that as supported — empirically only a single recognized entrypoint (`app.py`/`index.py`/etc., or `tool.vercel.entrypoint`) builds reliably right now. FastAPI is the documented, currently-working pattern; adds one small dependency. |
 | 7/8/2026 | `conversation_id` is generated client-side (GUI) and passed on every `/api/execute` call, not returned by the server | The response shape is locked to exactly `{status, error, response, steps}` — no field to hand a server-generated id back through. |
+| 8/8/2026 | Conversation history is loaded by `api/index.py` and passed in as a list: `supervisor.run(prompt, history)`. Agents never touch the store. | Considered the alternative of giving the Supervisor the `conversation_id` and letting it query Supabase itself. Rejected: agent code would then depend on a database that does not exist yet, blocking Person B and Person C from testing against real history. With the list passed in, `run()` is a pure function testable with a literal. The one real argument for the other shape — fetching selectively to control cost — is a *shaping* decision the Supervisor can still make on a list it was handed, with no DB access needed. Whichever side loads it, only one may: the earlier code did both, which is how the loaded history ended up discarded. |
+| 8/8/2026 | Conversation state is best-effort: `load_history`/`save_history` no-op when `SUPABASE_URL`/`SUPABASE_KEY` are unset | The GUI sends a `conversation_id` on every call, so an unconfigured (or briefly unreachable) Supabase turned every single GUI request into `status: "error"`. Degrading to single-turn keeps the agent usable; multi-turn enables itself once the env vars exist, with no code change. |
 
 ---
 
@@ -168,5 +172,6 @@ Retrieval must be scoped/filtered by airline to avoid irrelevant CoC clauses blo
 
 - No real booking API is named in the spec — flights/hotels data strategy needs a firm answer before Person B can start Phase 2 in earnest. Still open.
 - Reflection loop cost: needs a hard iteration cap decided during DocumentationAgent design, not discovered during a budget overrun.
+- **Unbounded conversation history is a budget risk — decide the cap in Phase 2, before the Supervisor prompt is written.** The route hands the Supervisor every prior turn. If the Supervisor pastes all of it into the prompt, turn N carries N−1 turns of text, so the token cost of a conversation grows quadratically with its length, not linearly. That is multiplied again by the ~5–7 LLM calls each turn already makes. A demo where someone asks four or five follow-ups — exactly the conversational-follow-up story that justifies agents over plain API calls — is where this bites, and $13 is shared across the whole team for the whole project. Options: a fixed last-N turns (simplest, start here), or a running summary the Supervisor maintains. The cap belongs in the Supervisor, since it owns what goes into a prompt; the caller just supplies the full list.
 - Multi-turn is now required (not optional): needs a concrete state model — `conversation_id` + history in Supabase (Person A owns this) — decided once at Phase 1, not re-litigated per PR. Adds a call to load/persist history on every `/api/execute` turn — factor into the $13 budget.
 - Python-on-Vercel routing approach (single WSGI/ASGI app + `vercel.json` rewrites vs. one function per `/api/*.py` file) not yet chosen — resolve when scaffolding in Phase 1.
