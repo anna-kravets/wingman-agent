@@ -104,7 +104,9 @@ much of it reaches a prompt (§7).
 
 ### Phase 3 — Integration (day 10–13)
 - [ ] Supervisor calls all 3 sub-agents, aggregates response, produces full end-to-end `steps` trace
-- [ ] `GET /api/agent_info` — only `prompt_examples[]` is blocked on the agents: `full_response`/`steps` must come from an actual run and cannot be fabricated. `description`, `purpose` and `prompt_template` describe the product, not the code, so they can be written and the route shipped before Phase 2 lands.
+- [~] `GET /api/agent_info` — route live; `description`, `purpose` and `prompt_template` written (they describe the product, not the code). **Still blocked:**
+  - [ ] `prompt_examples[]` — currently `[]`. `full_response` and `steps` must be captured verbatim from a real `/api/execute` run: `steps` has to match the actual LLM calls and the module names in the architecture PNG, and a grader can diff them against a live run. Fill in as the last integration step.
+  - [ ] Revisit the `description` once the flights/hotels data source is decided (§7). It currently says Wingman *proposes* options and books nothing, which is true either way — but if the options turn out to be mock/synthetic rather than real availability, the description has to say so outright.
 - [x] `GET /api/model_architecture` — PNG served with `Content-Type: image/png`, `includeFiles` set in `vercel.json` so it ships in the function bundle; verified in prod. Diagram labels match the locked module names.
 - [x] Error path: `{ "status": "error", "error": "...", "response": null, "steps": [] }` — input validated before dispatch, unexpected failures wrapped in a readable sentence; verified in prod.
 - [~] Multi-turn end-to-end: GUI sends prior `conversation_id`, the route loads history and passes it to `supervisor.run(prompt, history)`, agents see prior context on follow-ups (e.g. "can I take my ski bag on the 09:40?"). Plumbing done and tested against a fake store; **untested against real Supabase** — persistence no-ops until the env vars exist.
