@@ -1,3 +1,5 @@
 fastapi
 supabase
 uvicorn
+httpx
+pytest

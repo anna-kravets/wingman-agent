@@ -36,19 +36,59 @@ Split by agent boundary so each person owns a clean interface and integration ha
 | **Person B — Search agents**       | `FlightAgent` + `AccommodationAgent` (same role+one-shot pattern, reused twice). Owns the flights/hotels data-source decision + implementation.                                                                     |
 | **Person C — Rights/RAG**          | `DocumentationAgent` reflection loop (draft → self-critique → refine) + full data pipeline (collect CoC/regs, chunk, embed, Pinecone ingestion) + Supabase schema. Heaviest, most novel piece — the differentiator. |
 
-**Interface contract** (agree in Phase 0, then build independently against it): every agent function returns
+**Step object** — one per LLM call, built by `lib/steps.make_step()` (you get this for free by
+calling through `lib/llm.call()`, don't hand-build it):
 ```json
 { "module": "...", "prompt": { "system_prompt": "...", "user_prompt": "..." }, "response": {} }
 ```
-and the Supervisor concatenates these into `/api/execute`'s `steps[]` in call order.
+The Supervisor concatenates these into `/api/execute`'s `steps[]` in call order.
 
-**Supervisor entry point** (built against by `api/index.py`, do not change unilaterally):
+**Interface contract** (revised 8/8/2026 — supersedes "every agent function returns a step object";
+that shape could not express DocumentationAgent, whose reflection loop is three LLM calls and
+therefore three steps). Every agent returns a **`(payload, steps)`** pair: `payload` is the
+structured result the Supervisor consumes, `steps` is every step that agent produced, in call
+order.
+
 ```python
-supervisor.run(prompt: str, history: list[dict]) -> tuple[str, list[dict]]   # -> (response_text, steps)
+supervisor.run(prompt: str, history: list[dict])            -> tuple[str, list[dict]]   # (response_text, steps)
+flight_agent.run(request: dict, history: list[dict])        -> tuple[dict, list[dict]]  # (payload, steps)
+accommodation_agent.run(request, stay_window, history)      -> tuple[dict, list[dict]]
+documentation_agent.run(request: dict, history: list[dict]) -> tuple[dict, list[dict]]
 ```
+
 `history` is the conversation's prior turns, `[{"prompt": ..., "response": ...}, ...]`, oldest
-first, already loaded by the caller — agent code never touches Supabase. The Supervisor decides how
-much of it reaches a prompt (§7).
+first, already loaded by `api/index.py` — agent code never touches Supabase. The Supervisor decides
+how much of it reaches a prompt (§7).
+
+`request` is what the Supervisor's question-refinement pass extracts from the passenger's message:
+```python
+{"airline", "flight_number", "origin", "destination",
+ "disruption": "delayed" | "cancelled" | "denied_boarding",
+ "stranded_at", "party_size", "arrive_by": iso8601 | None,
+ "needs": ["flight", "stay", "rights"], "local_now": iso8601}
+```
+
+**Payloads** — the shapes the Supervisor reads. `depart`/`arrive` are ISO 8601 local times and are
+load-bearing: the date sync derives the hotel nights from the chosen flight's departure.
+```python
+# FlightAgent
+{"options": [{"id", "airline", "flight_number", "origin", "destination",
+              "depart", "arrive", "stops", "fare_conditions", "notes"}],
+ "recommended_id": "F1"}
+
+# AccommodationAgent
+{"options": [{"id", "name", "area", "check_in", "check_out", "nights",
+              "price_estimate", "meals_included", "notes"}],
+ "recommended_id": "H1"}
+
+# DocumentationAgent
+{"regulation": "EU 261/2004" | "US DOT" | "none",
+ "entitlements": [{"kind": "rebooking" | "hotel" | "meals" | "cash_compensation" | "other",
+                   "summary", "source", "confidence": "high" | "medium" | "low"}],
+ "next_actions": [str], "caveats": [str]}
+```
+`source` on each entitlement is what makes the Contract of Carriage differentiator visible in the
+output — cite the clause, not just the regulation.
 
 ---
 
@@ -95,15 +135,24 @@ much of it reaches a prompt (§7).
 - [~] Supabase table for conversation history (`conversation_id`, turn history) — schema written (`docs/schema.sql`) and `lib/conversation.py` client built; actual Supabase project not yet created, so untested end-to-end
 
 ### Phase 2 — Agent builds, parallel (day 4–10)
-- [ ] **Supervisor:** question-refinement system prompt (elicit missing details from stressed/underspecified first message), dispatch logic, date-sync between Flight/Accommodation calls
-  - [ ] **Decide the history cap** (see §7): `supervisor.run(prompt, history)` receives every prior turn. Pick how many actually go into the prompt — a fixed last-N, or a running summary — and implement it in the Supervisor, not the caller.
-- [ ] **FlightAgent:** role prompt + one-shot example of a flight-search result, conversational follow-up (compare options, check terms)
-- [ ] **AccommodationAgent:** role prompt + one-shot example of a booking result, matched to the dates FlightAgent returns, conversational follow-up (e.g. meals included)
+
+**Harness is in place (8/8/2026).** `lib/llm.py` is the single choke point for LLM calls — call
+through it and the `steps` entry is built for you. All three sub-agents exist as stubs
+(`IS_STUB = True`) carrying the real prompts, signatures and payload shapes, so `/api/execute`
+already returns a full end-to-end trace. To build one for real: replace the body of its `run()`,
+drop the flag. Nothing around it changes. `pytest` covers the whole path and needs no key.
+
+- [~] **Supervisor:** dispatch, date-sync, history cap and partial-failure policy built and tested. Two seams still stubbed pending the LLMod key: `_extract_request` (question refinement) and `_compose` (writing the plan) — both already carry the prompt they should send.
+  - [x] **History cap decided** (see §7): last `HISTORY_TURNS = 6` turns, trimmed in the Supervisor.
+  - [x] **Partial-failure policy:** one sub-agent raising must not lose the rest of the plan; the passenger is told what is missing. A failed flight search skips accommodation rather than guessing the nights.
+- [~] **FlightAgent:** role prompt + one-shot example written; stub returns the payload shape. Person B replaces `run()`.
+- [~] **AccommodationAgent:** role prompt + one-shot example written; stub returns the payload shape, for the nights the Supervisor derives from the chosen flight. Person B replaces `run()`.
 - [ ] **Data pipeline** (start early — blocks DocumentationAgent): collect EU261 + US DOT text, 3–5 airline CoCs, chunk, embed via `text-embedding-3-small` (1536-dim), upsert to Pinecone with an `airline` metadata field for filtered retrieval
-- [ ] **DocumentationAgent:** reflection loop (draft → self-critique → refine) over the RAG index, scoped/filtered by airline
+- [~] **DocumentationAgent:** draft / critique / refine prompts written; stub emits all three steps so the trace shape is right. Person C replaces `run()` with the real loop over the RAG index, scoped/filtered by airline. Cap at one critique pass — this agent is 3 of the ~7 calls per turn.
 
 ### Phase 3 — Integration (day 10–13)
-- [ ] Supervisor calls all 3 sub-agents, aggregates response, produces full end-to-end `steps` trace
+- [~] Supervisor calls all 3 sub-agents, aggregates response, produces full end-to-end `steps` trace — working against the stubs and covered by `tests/`. Re-verify as each real agent lands.
+- [ ] **Verify `lib/llm.py` against the real LLMod.ai endpoint the day the key arrives.** The request/response shape is currently *assumed* OpenAI-compatible (`POST {base}/chat/completions`) and has never been run. If it differs, that file is the only thing to change — but nothing works until it is checked.
 - [~] `GET /api/agent_info` — route live; `description`, `purpose` and `prompt_template` written (they describe the product, not the code). **Still blocked:**
   - [ ] `prompt_examples[]` — currently `[]`. `full_response` and `steps` must be captured verbatim from a real `/api/execute` run: `steps` has to match the actual LLM calls and the module names in the architecture PNG, and a grader can diff them against a live run. Fill in as the last integration step.
   - [ ] Revisit the `description` once the flights/hotels data source is decided (§7). It currently says Wingman *proposes* options and books nothing, which is true either way — but if the options turn out to be mock/synthetic rather than real availability, the description has to say so outright.
@@ -180,6 +229,7 @@ Retrieval must be scoped/filtered by airline to avoid irrelevant CoC clauses blo
 | 7/8/2026 | Python runtime (final): single FastAPI `app` in `api/index.py`, all endpoints as routes on it | Live `vercel deploy` rejected multiple separate `handler`-per-file functions under `/api` ("No python entrypoint found in default locations") even though general Vercel docs describe that as supported — empirically only a single recognized entrypoint (`app.py`/`index.py`/etc., or `tool.vercel.entrypoint`) builds reliably right now. FastAPI is the documented, currently-working pattern; adds one small dependency. |
 | 7/8/2026 | `conversation_id` is generated client-side (GUI) and passed on every `/api/execute` call, not returned by the server | The response shape is locked to exactly `{status, error, response, steps}` — no field to hand a server-generated id back through. |
 | 8/8/2026 | Conversation history is loaded by `api/index.py` and passed in as a list: `supervisor.run(prompt, history)`. Agents never touch the store. | Considered the alternative of giving the Supervisor the `conversation_id` and letting it query Supabase itself. Rejected: agent code would then depend on a database that does not exist yet, blocking Person B and Person C from testing against real history. With the list passed in, `run()` is a pure function testable with a literal. The one real argument for the other shape — fetching selectively to control cost — is a *shaping* decision the Supervisor can still make on a list it was handed, with no DB access needed. Whichever side loads it, only one may: the earlier code did both, which is how the loaded history ended up discarded. |
+| 8/8/2026 | **Interface contract revised** (§1): agents return `(payload, steps)`, not a single step object | The original shape assumed one LLM call per agent. DocumentationAgent's reflection loop is three calls and must emit three `steps` entries, so a single step object could not express it — and the spec requires every LLM call to appear. Splitting the structured result (`payload`, for the Supervisor) from the trace (`steps`, for `/api/execute`) fixes it for every agent, not just that one. Checked `CLAUDE.md` for the old wording per §7; it never restated the contract, so no change was needed there. |
 | 8/8/2026 | Conversation state is best-effort: `load_history`/`save_history` no-op when `SUPABASE_URL`/`SUPABASE_KEY` are unset | The GUI sends a `conversation_id` on every call, so an unconfigured (or briefly unreachable) Supabase turned every single GUI request into `status: "error"`. Degrading to single-turn keeps the agent usable; multi-turn enables itself once the env vars exist, with no code change. |
 
 ---
