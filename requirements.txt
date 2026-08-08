@@ -3,3 +3,4 @@ supabase
 uvicorn
 httpx
 pytest
+python-dotenv

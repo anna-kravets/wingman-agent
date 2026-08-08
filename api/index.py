@@ -1,8 +1,11 @@
 from pathlib import Path
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+
+load_dotenv()
 
 from lib import conversation
 from lib.agents import supervisor
