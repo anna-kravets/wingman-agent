@@ -124,3 +124,10 @@ from:
   descriptions from the first commit — retrofitting consistency later is wasted effort.
 - Verify locally *and* on Vercel before considering something done (guidelines explicitly call out
   dev/prod parity).
+- **Reversing an earlier decision? Update every file that states it, in the same commit.**
+  `docs/PROJECT_PLAN.md` §6 is the decisions log, but decisions also get restated in their own
+  words in this file and across the plan's phase and resource sections. Logging a reversal in only
+  one place leaves the others actively instructing the wrong build — on 8/8/2026 this file still
+  told teammates to have the Supervisor query Supabase itself, and to "build it from Phase 1, don't
+  retrofit", after that exact shape had been rejected. Before committing a reversal, grep both this
+  file and `docs/PROJECT_PLAN.md` for the old shape and fix what you find.

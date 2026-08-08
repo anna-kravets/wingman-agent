@@ -163,6 +163,10 @@ Retrieval must be scoped/filtered by airline to avoid irrelevant CoC clauses blo
 
 ## 6. Decisions log
 
+> Adding a row that **reverses** an earlier decision? This log is not the only place decisions are
+> stated — grep `../CLAUDE.md` and the rest of this file for the old shape and fix those too, in the
+> same commit. See `CLAUDE.md` §7.
+
 | Date | Decision | Rationale |
 |---|---|---|
 | 7/8/2026 | Module names locked: `Supervisor`, `FlightAgent`, `AccommodationAgent`, `DocumentationAgent` | Must stay identical across code, architecture PNG, `agent_info` — locking early avoids rework. |
