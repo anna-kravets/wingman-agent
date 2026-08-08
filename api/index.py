@@ -2,19 +2,17 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from lib import conversation
 from lib.agents import supervisor
 
 app = FastAPI()
 
-ARCHITECTURE_PNG = (
-    Path(__file__).resolve().parent.parent
-    / "architecture_diagram"
-    / "architecture_diagram.png"
-)
+REPO_ROOT = Path(__file__).resolve().parent.parent
+ARCHITECTURE_PNG = REPO_ROOT / "architecture_diagram" / "architecture_diagram.png"
+PUBLIC_DIR = REPO_ROOT / "public"
 
-# TODO: fill with real values before submission.
 TEAM_INFO = {
     "group_batch_order_number": "2_6",
     "team_name": "Wingman",
@@ -70,3 +68,12 @@ async def execute(request: Request):
         "response": response_text,
         "steps": steps,
     }
+
+
+# Serves the GUI at / for local development. Must stay last: a mount on "/"
+# matches everything, and routes are matched in declaration order, so the
+# /api/* routes above win. In production this never runs — Vercel serves
+# /public from the CDN before a request reaches the function — and the
+# directory may not be in the function bundle at all, hence the guard.
+if PUBLIC_DIR.is_dir():
+    app.mount("/", StaticFiles(directory=PUBLIC_DIR, html=True), name="public")
