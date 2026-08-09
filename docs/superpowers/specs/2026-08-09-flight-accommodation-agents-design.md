@@ -1,6 +1,6 @@
 # FlightAgent + AccommodationAgent — design
 
-**Owner:** Person B · **Date:** 9/8/2026 · **Branch:** `Flight-and-Accomodation-Agents`
+**Owner:** Person B · **Date:** 9/8/2026 · **Branch:** `Flight-and-Accommodation-Agents`
 **Context:** [`../../PROJECT_PLAN.md`](../../PROJECT_PLAN.md) §1 (interface contract), §2 Phase 2.
 **Deadline:** 23/8/2026.
 
