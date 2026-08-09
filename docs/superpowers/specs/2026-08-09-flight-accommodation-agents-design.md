@@ -74,7 +74,7 @@ Three new files under `lib/tools/`, all pure data-fetch — **no LLM calls insid
 
 ```python
 # lib/tools/airports.py — static, committed, no network
-lookup(iata: str) -> dict | None          # {"iata","name","lat","lon","tz"}
+lookup(iata: str) -> dict | None          # {"iata","name","city","country","lat","lon"}
 
 # lib/tools/flights.py
 search(origin: str, destination: str, after: datetime) -> list[dict]
