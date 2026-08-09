@@ -43,10 +43,16 @@ the agent supports multi-turn.
 - **Supervisor agent** — entry point. Pattern: **question refinement** (elicits missing details from a
   stressed, underspecified first message before dispatching). Also times the Flight and Accommodation
   agents so accommodation dates match whatever alternative flight was found (**date sync**).
-- **Flight agent** — pattern: **role prompt + one-shot example** of a flight-search result. Finds alternative
-  flights across airlines, stays conversational for follow-ups (compare options, check terms).
-- **Accommodation agent** — same pattern (**role + one-shot**). Books/matches stays for the exact nights
-  the new flight leaves the passenger stranded, stays conversational (e.g. meals included).
+- **Flight agent** — pattern: **role prompt + one-shot example**, choosing from real departures
+  supplied by `lib/tools/flights.py` (AeroDataBox). Finds alternative flights across airlines and
+  stays conversational for follow-ups (compare options, ask about timings, request an earlier
+  departure). It has **schedule data only**: baggage, fare and entitlement questions are deferred
+  to `DocumentationAgent`, which can cite the Contract of Carriage clause.
+- **Accommodation agent** — same pattern (**role + one-shot**), choosing from real hotels near the
+  airport supplied by `lib/tools/hotels.py` (OpenStreetMap). Matches stays to the exact nights the
+  new flight leaves the passenger stranded, stays conversational. It knows each hotel's name and
+  exact distance from the terminal and **nothing else** — prices are estimates and meals are
+  unconfirmed unless the data says otherwise.
 - **Documentation agent** — pattern: **reflection loop** (draft → self-critique → refine). Produces the
   rights/entitlements breakdown from regulations (EU 261 / US DOT) *and* the airline's Contract of
   Carriage — this is the differentiator, give it the most care.
@@ -65,6 +71,17 @@ boundaries, tool interfaces, and how "conversational follow-up" is represented i
 
 Use Pinecone (see §5) as the vector store for these; keep retrieval scoped/filtered by airline to avoid
 irrelevant CoC clauses bloating context (budget discipline, see §7).
+
+**Live data for the search agents (decided 9/8/2026):**
+
+- **Flight schedules** — AeroDataBox (RapidAPI free plan, 600 units/month, 2 units per call). Real
+  departures, filtered to the passenger's route in `lib/tools/flights.py`. **No free source of fares
+  or seat availability exists as of 8/2026** — Amadeus Self-Service was decommissioned 17/7/2026 —
+  so prices are LLM estimates and must be labelled as such.
+- **Hotels** — OpenStreetMap via Overpass (keyless, unmetered). Real properties with exact distance
+  from the airport. No prices, availability or meals.
+- **Airport coordinates** — a committed table generated from OurAirports (public domain), so
+  resolving an IATA code costs no API call.
 
 ## 5. Hard technical constraints (graded — names/shapes must match exactly)
 
@@ -114,7 +131,12 @@ from:
   don't retrofit.
 - Which airlines' CoC documents to actually collect for the RAG corpus (only AA was sourced during
   Assignment 2) — still open.
-- Flights/hotels data source (mock vs. free-tier real API) — still open, see `docs/PROJECT_PLAN.md` §7.
+- **Resolved (9/8/2026):** flights/hotels data source — flights from AeroDataBox, hotels from
+  OpenStreetMap Overpass (§4). Amadeus Self-Service, the obvious choice, was decommissioned
+  17/7/2026 and its keys disabled. Prices and seat availability have no free source and are LLM
+  estimates, labelled as such — `/api/agent_info`'s `description` must say so. Full rationale and
+  the measured API facts:
+  `docs/superpowers/specs/2026-08-09-flight-accommodation-agents-design.md`.
 
 ## 7. Build discipline
 

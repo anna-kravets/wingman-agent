@@ -27,17 +27,44 @@ and LLMod.ai credentials exist.
 pytest
 ```
 
-From the repo root. No API key and no database needed — the suite runs against the
-sub-agent stubs, so it works on a fresh clone. Run it before pushing: it is what stops
-one person's agent from breaking another's.
+From the repo root. No API key and no database needed: LLM calls go through the
+`fake_llm` fixture in `tests/conftest.py`, and `conftest.py` forces
+`WINGMAN_LIVE_DATA=0` so the suite can never spend API quota or hit a public
+endpoint. Run it before pushing: it is what stops one person's agent from breaking
+another's.
+
+### Live data
+
+`FlightAgent` uses AeroDataBox (free plan: **600 units/month, 2 units per call**) and
+`AccommodationAgent` uses OpenStreetMap's Overpass API (keyless).
+
+Set `WINGMAN_LIVE_DATA=0` in your local `.env` while developing. Both tools then make no
+network requests at all and the agents degrade to reasoning unaided, clearly labelled.
+
+Check remaining quota (costs nothing):
+
+```bash
+curl -s -H "x-rapidapi-key: $AERODATABOX_API_KEY" \
+     -H "x-rapidapi-host: aerodatabox.p.rapidapi.com" \
+     -D - -o /dev/null \
+     https://aerodatabox.p.rapidapi.com/subscriptions/balance | grep api-units
+```
+
+Regenerate the airport coordinate table (rarely needed — the output is committed):
+
+```bash
+python scripts/build_airports.py
+```
 
 ## Building an agent
 
-The sub-agents in `lib/agents/` are stubs (`IS_STUB = True`) with the real prompts and
-the real signatures already in place. Replace the body of `run()`, drop the flag, and
-nothing around them changes. `lib/llm.py` is the only place that talks to LLMod.ai —
-call through it and your `steps` entry is built for you. Interface shapes are in
-`docs/PROJECT_PLAN.md` §1.
+`DocumentationAgent` in `lib/agents/` is still a stub (`IS_STUB = True`) with the real
+prompts and signatures already in place. Replace the body of `run()`, drop the flag, and
+nothing around it changes. `lib/llm.py` is the only place that talks to LLMod.ai — call
+through it and your `steps` entry is built for you. `FlightAgent` and
+`AccommodationAgent` are built and are worth reading as worked examples: each fetches
+candidates through a `lib/tools/` module, injects them into its prompt, makes exactly one
+LLM call, and validates what comes back. Interface shapes are in `docs/PROJECT_PLAN.md` §1.
 
 ## Repo layout
 
