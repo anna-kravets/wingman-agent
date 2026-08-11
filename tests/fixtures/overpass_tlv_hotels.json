@@ -1,0 +1,322 @@
+{
+  "version": 0.6,
+  "generator": "Overpass API 0.7.62.11 87bfad18",
+  "osm3s": {
+    "timestamp_osm_base": "2026-08-09T09:53:51Z",
+    "copyright": "The data included in this document is from www.openstreetmap.org. The data is made available under ODbL."
+  },
+  "elements": [
+
+{
+  "type": "node",
+  "id": 705604823,
+  "lat": 32.0792916,
+  "lon": 34.8149626,
+  "tags": {
+    "addr:street": "קריניצי",
+    "name": "רוקסון אורבן",
+    "name:en": "Roxon Urban",
+    "name:he": "רימונים אופטימה",
+    "tourism": "hotel"
+  }
+},
+{
+  "type": "node",
+  "id": 963176443,
+  "lat": 32.0551696,
+  "lon": 34.8269911,
+  "tags": {
+    "alt_name:en": "Maccabiah Village",
+    "name": "כפר המכביה",
+    "name:en": "Kfar Ha'Maccabiah",
+    "name:he": "כפר המכביה",
+    "tourism": "hotel",
+    "wikidata": "Q6795120"
+  }
+},
+{
+  "type": "node",
+  "id": 1219941160,
+  "lat": 32.0744838,
+  "lon": 34.7923922,
+  "tags": {
+    "addr:housenumber": "136",
+    "addr:postcode": "67021",
+    "addr:street": "דרך מנחם בגין",
+    "brand": "Crowne Plaza",
+    "brand:wikidata": "Q2746220",
+    "contact:fax": "+972-3-7774001",
+    "contact:phone": "+972-3-7774000",
+    "contact:website": "http://www.ichotelsgroup.com/crowneplaza/hotels/us/en/tel-aviv/tlvcc/hoteldetail",
+    "name": "Tel Aviv City Center",
+    "name:en": "Tel Aviv City Center",
+    "note": "Azrieli Center 5",
+    "operator": "Crowne Plaza",
+    "tourism": "hotel",
+    "wheelchair": "yes"
+  }
+},
+{
+  "type": "node",
+  "id": 2079226681,
+  "lat": 32.0673020,
+  "lon": 34.7780590,
+  "tags": {
+    "addr:city": "תל אביב-יפו",
+    "addr:housenumber": "96",
+    "addr:street": "רוטשילד",
+    "contact:facebook": "Rothschild.Hotel.TelAviv",
+    "contact:instagram": "rothschild_hotel",
+    "contact:whatsapp": "+972549226424",
+    "name": "The Rothschild Hotel",
+    "name:en": "The Rothschild Hotel",
+    "phone": "+972 54 922 6424;+972 3 957 8888",
+    "source": "Tel Aviv municipality",
+    "tourism": "hotel",
+    "website": "https://www.the-rothschild-hotel.com/en/"
+  }
+},
+{
+  "type": "node",
+  "id": 2144611987,
+  "lat": 31.9684367,
+  "lon": 34.8427058,
+  "tags": {
+    "name": "שדות",
+    "name:en": "Sadot",
+    "name:he": "שדות",
+    "tourism": "hotel"
+  }
+},
+{
+  "type": "node",
+  "id": 2921634119,
+  "lat": 32.0873731,
+  "lon": 34.8026899,
+  "tags": {
+    "brand": "Hotel Indigo",
+    "brand:wikidata": "Q5911596",
+    "name": "Hotel Indigo",
+    "name:en": "Hotel Indigo",
+    "tourism": "hotel"
+  }
+},
+{
+  "type": "node",
+  "id": 2950317983,
+  "lat": 32.0657753,
+  "lon": 34.7767884,
+  "tags": {
+    "addr:city": "Tel Aviv",
+    "addr:housenumber": "71",
+    "addr:street": "שדרות רוטשילד",
+    "name": "the rothschild 71",
+    "name:en": "the rothschild 71",
+    "phone": "+972 3 6290555",
+    "tourism": "hotel",
+    "website": "https://www.the-rothschild.com/"
+  }
+},
+{
+  "type": "node",
+  "id": 3930280740,
+  "lat": 31.9747828,
+  "lon": 34.8077637,
+  "tags": {
+    "addr:city": "ראשון לציון",
+    "addr:housenumber": "8",
+    "addr:street": "המכבים",
+    "level": "2",
+    "name": "House Boutique Hotel",
+    "name:en": "House Boutique Hotel",
+    "tourism": "hotel",
+    "wikidata": "Q111997829"
+  }
+},
+{
+  "type": "node",
+  "id": 4960182224,
+  "lat": 32.0459943,
+  "lon": 34.8418917,
+  "tags": {
+    "addr:place": "בית חולים תל השומר",
+    "air_conditioning": "yes",
+    "contact:fax": "+972 3 621 0138",
+    "contact:phone": "+972 3 535 2727",
+    "contact:website": "http://www.apropohotel.co.il",
+    "name": "אפרופו",
+    "name:en": "Apropo",
+    "name:he": "אפרופו",
+    "tourism": "hotel",
+    "wheelchair": "yes"
+  }
+},
+{
+  "type": "node",
+  "id": 6278311932,
+  "lat": 32.0934592,
+  "lon": 34.8649907,
+  "tags": {
+    "name": "Prime Link",
+    "name:en": "Prime Link",
+    "tourism": "hotel"
+  }
+},
+{
+  "type": "node",
+  "id": 7371640558,
+  "lat": 32.0739035,
+  "lon": 34.8374427,
+  "tags": {
+    "addr:housenumber": "16",
+    "addr:street": "דמשק אליעזר",
+    "air_conditioning": "yes",
+    "internet_access": "wlan",
+    "name": "אריסטוקרט",
+    "name:en": "Aristocrat",
+    "name:he": "אריסטוקרט",
+    "stars": "4",
+    "tourism": "hotel"
+  }
+},
+{
+  "type": "node",
+  "id": 10869224180,
+  "lat": 32.0653335,
+  "lon": 34.7763509,
+  "tags": {
+    "name": "מלון אטלס",
+    "name:en": "Atlas Hotel",
+    "name:he": "מלון אטלס",
+    "tourism": "hotel"
+  }
+},
+{
+  "type": "node",
+  "id": 10942124877,
+  "lat": 32.0664238,
+  "lon": 34.7881912,
+  "tags": {
+    "name": "JO",
+    "tourism": "hotel"
+  }
+},
+{
+  "type": "node",
+  "id": 11238376986,
+  "lat": 32.0778183,
+  "lon": 34.7904329,
+  "tags": {
+    "name": "Link",
+    "tourism": "hotel"
+  }
+},
+{
+  "type": "node",
+  "id": 12588016861,
+  "lat": 32.0588441,
+  "lon": 34.7746630,
+  "tags": {
+    "addr:city": "תל אביב-יפו",
+    "addr:housenumber": "64",
+    "addr:street": "לוינסקי",
+    "contact:facebook": "lmarkethotel",
+    "contact:instagram": "levinski.market.hotel",
+    "contact:whatsapp": "972586464858",
+    "email": "contact@lmarkethotel.com",
+    "name": "Levinski Market Hotel",
+    "phone": "+972 58 646 4858",
+    "tourism": "hotel",
+    "website": "https://www.lmarkethotel.com/"
+  }
+},
+{
+  "type": "node",
+  "id": 13725354485,
+  "lat": 32.0751847,
+  "lon": 34.7923925,
+  "tags": {
+    "name": "קראון פלאזה",
+    "name:en": "Crown Plaza",
+    "tourism": "hotel"
+  }
+},
+{
+  "type": "way",
+  "id": 90723262,
+  "center": {
+    "lat": 32.0846187,
+    "lon": 34.7995650
+  },
+  "tags": {
+    "addr:housenumber": "3",
+    "addr:street": "מנחם בגין",
+    "building": "yes",
+    "building:colour": "peachpuff",
+    "building:levels": "28",
+    "building:part": "yes",
+    "height": "119.5",
+    "layer": "1",
+    "name": "לאונרדו סיטי טאוור",
+    "name:en": "Leonardo City Tower",
+    "name:he": "לאונרדו סיטי טאוור",
+    "roof:colour": "peachpuff",
+    "tourism": "hotel",
+    "wikidata": "Q2908788"
+  }
+},
+{
+  "type": "way",
+  "id": 97522466,
+  "center": {
+    "lat": 32.1081869,
+    "lon": 34.8375985
+  },
+  "tags": {
+    "building": "yes",
+    "name": "ליאונרדו בוטיק",
+    "name:en": "Tel Aviv Leonardo Boutique",
+    "name:he": "ליאונרדו בוטיק",
+    "tourism": "hotel"
+  }
+},
+{
+  "type": "way",
+  "id": 295849278,
+  "center": {
+    "lat": 32.0498517,
+    "lon": 34.8483521
+  },
+  "tags": {
+    "air_conditioning": "yes",
+    "building": "yes",
+    "building:levels": "5",
+    "healthcare:speciality": "cardiology",
+    "name": "מלון רפואי שי לב",
+    "name:en": "Medical Hotel Shai Lev",
+    "name:he": "מלון רפואי שי לב",
+    "tourism": "hotel",
+    "wheelchair": "yes"
+  }
+},
+{
+  "type": "way",
+  "id": 349621023,
+  "center": {
+    "lat": 32.0554874,
+    "lon": 34.8283267
+  },
+  "tags": {
+    "building": "yes",
+    "internet_access": "wlan",
+    "internet_access:fee": "no",
+    "name": "Kfar Ha'Maccabiah Hotel",
+    "name:en": "Kfar Ha'Maccabiah Hotel",
+    "name:he": "מלון כפר המכביה",
+    "tourism": "hotel",
+    "wikidata": "Q111400006"
+  }
+}
+
+  ]
+}

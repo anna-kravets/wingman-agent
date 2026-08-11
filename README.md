@@ -1,12 +1,9 @@
 # Wingman
 
-Wingman is a multi-agent assistant for disrupted airline passengers. This branch contains the
-completed `DocumentationAgent`: airline- and jurisdiction-aware legal retrieval, deterministic
-coverage recovery, and a grounded draft → critique → refine answer flow.
-
-The Flight and Accommodation agents and parts of the Supervisor remain owned by the wider Wingman
-project. The instructions below describe the completed DocumentationAgent and its integration
-points; they do not claim that every other agent is production-complete.
+Wingman is a multi-agent assistant for disrupted airline passengers. `FlightAgent`,
+`AccommodationAgent`, and `DocumentationAgent` are all built: real flight/hotel lookups, and
+airline- and jurisdiction-aware legal retrieval with a grounded draft → critique → refine
+answer flow.
 
 ## Environment setup
 
@@ -95,12 +92,46 @@ test artifacts also retain token usage and completion finish reasons.
 pytest -q
 ```
 
-The suite mocks external services and does not require credentials or make paid API calls.
+From the repo root. No API key and no database needed: LLM calls go through the
+`fake_llm` fixture in `tests/conftest.py`, and `conftest.py` forces
+`WINGMAN_LIVE_DATA=0` so the suite can never spend API quota or hit a public
+endpoint. Run it before pushing: it is what stops one person's agent from breaking
+another's.
+
+### Live data
+
+`FlightAgent` uses AeroDataBox (free plan: **600 units/month, 2 units per call**) and
+`AccommodationAgent` uses OpenStreetMap's Overpass API (keyless).
+
+Set `WINGMAN_LIVE_DATA=0` in your local `.env` while developing. Both tools then make no
+network requests at all and the agents degrade to reasoning unaided, clearly labelled.
+
+Check remaining quota (costs nothing):
+
+```bash
+curl -s -H "x-rapidapi-key: $AERODATABOX_API_KEY" \
+     -H "x-rapidapi-host: aerodatabox.p.rapidapi.com" \
+     -D - -o /dev/null \
+     https://aerodatabox.p.rapidapi.com/subscriptions/balance | grep api-units
+```
+
+Regenerate the airport coordinate table (rarely needed — the output is committed):
+
+```bash
+python scripts/build_airports.py
+```
 
 ## Explicitly approved live tests
 
-Live scripts are budget-gated and refuse to run without confirmation flags. A full one-round test
-uses one primary embedding request, possibly one fallback embedding request, and three chat calls.
+`lib/llm.py` is the only place that talks to LLMod.ai — call through it and your `steps`
+entry is built for you. `FlightAgent` and `AccommodationAgent` are worth reading as worked
+examples: each fetches candidates through a `lib/tools/` module, injects them into its
+prompt, makes exactly one LLM call, and validates what comes back. Interface shapes are in
+`docs/PROJECT_PLAN.md` §1.
+
+Live scripts are budget-gated and refuse to run without confirmation flags. A full one-round
+DocumentationAgent test uses one primary embedding request, possibly one fallback embedding
+request, and three chat calls.
 
 Retrieval only:
 

@@ -19,10 +19,10 @@ Resolved at kickoff meeting (7/8/2026) — full log in §6.
 - [x] **Module names** (final, used verbatim in code, architecture PNG, and `/api/agent_info` text):
   `Supervisor`, `FlightAgent`, `AccommodationAgent`, `DocumentationAgent`
 - [x] **Stack:** Python serverless functions on Vercel.
-- [x] **Multi-turn support:** required, not optional. Conversational follow-up (compare flight options, check terms) is the core justification for agents over plain API calls — must work end-to-end.
+- [x] **Multi-turn support:** required, not optional. Conversational follow-up is the core justification for agents over plain API calls — must work end-to-end. Note the follow-up is answered by *Wingman as a whole*, not by one agent: comparing flight options is `FlightAgent`, while checking the terms of one is `DocumentationAgent` reading the Contract of Carriage (§6).
 - [x] **Task tracker:** none — coordinate directly.
 - [x] **Comms channel:** none — coordinate directly.
-- [ ] **Flights/hotels data source:** mock/synthetic data vs. a free-tier real API — still open, see §7. No booking site may be named in any user-facing text (carried over from the pitch deck constraint).
+- [x] **Flights/hotels data source:** **AeroDataBox** (flights) + **OpenStreetMap Overpass** (hotels), decided 9/8/2026 — see §6. Real schedules and real hotels; prices and availability have no free source and are labelled estimates. No booking site may be named in any user-facing text (carried over from the pitch deck constraint).
 
 ---
 
@@ -137,16 +137,31 @@ output — cite the clause, not just the regulation.
 ### Phase 2 — Agent builds, parallel (day 4–10)
 
 **Harness is in place (8/8/2026).** `lib/llm.py` is the single choke point for LLM calls — call
-through it and the `steps` entry is built for you. All three sub-agents exist as stubs
-(`IS_STUB = True`) carrying the real prompts, signatures and payload shapes, so `/api/execute`
-already returns a full end-to-end trace. To build one for real: replace the body of its `run()`,
-drop the flag. Nothing around it changes. `pytest` covers the whole path and needs no key.
+through it and the `steps` entry is built for you.
+
+**Updated 9/8/2026:** `FlightAgent` and `AccommodationAgent` are built and no longer stubs. Only
+`DocumentationAgent` still carries `IS_STUB = True`, with the real prompts, signature and payload
+shape in place. To build it for real: replace the body of `run()`, drop the flag — nothing around
+it changes. The two finished agents are worth reading as worked examples of the shape: fetch
+candidates through a `lib/tools/` module, inject them into the prompt, make exactly one LLM call,
+validate what comes back. `pytest` covers the whole path and needs no key: LLM calls go through
+the `fake_llm` fixture in `tests/conftest.py`, and `conftest.py` forces `WINGMAN_LIVE_DATA=0` so
+the suite can never spend API quota.
+
+**Updated 11/8/2026:** `DocumentationAgent` is built too now (grounded retrieval + one reflection
+round, see the Phase 2 checklist below) — no agent is stubbed anymore.
+
+**Note for Person A:** without an `LLMOD_API_KEY`, `/api/execute`'s trace now contains no
+`FlightAgent` or `AccommodationAgent` steps — those agents fail through the partial-failure path
+instead of returning stub fiction. `tests/test_execute.py` still passes, because it validates the
+steps that are present rather than asserting all four modules appear. That gap closes by itself
+the day the key lands.
 
 - [~] **Supervisor:** dispatch, date-sync, history cap and partial-failure policy built and tested. Two seams still stubbed pending the LLMod key: `_extract_request` (question refinement) and `_compose` (writing the plan) — both already carry the prompt they should send.
   - [x] **History cap decided** (see §7): last `HISTORY_TURNS = 6` turns, trimmed in the Supervisor.
   - [x] **Partial-failure policy:** one sub-agent raising must not lose the rest of the plan; the passenger is told what is missing. A failed flight search skips accommodation rather than guessing the nights.
-- [~] **FlightAgent:** role prompt + one-shot example written; stub returns the payload shape. Person B replaces `run()`.
-- [~] **AccommodationAgent:** role prompt + one-shot example written; stub returns the payload shape, for the nights the Supervisor derives from the chosen flight. Person B replaces `run()`.
+- [x] **FlightAgent:** real departures from AeroDataBox, filtered to the route and trimmed in `lib/tools/flights.py` (118KB/188 departures → ~630 bytes); role+one-shot prompt now selects from verified candidates. Scope narrowed: baggage/fare/entitlement questions defer to `DocumentationAgent` (§6).
+- [x] **AccommodationAgent:** real hotels from OpenStreetMap with exact distance from the terminal, for the nights the Supervisor derives from the chosen flight. Prices are estimates and meals are unconfirmed unless the data says otherwise.
 - [x] **Data pipeline:** collected EU, US, and Israeli passenger-rights material plus 13 airline/operator CoC namespaces; section-aware chunking; embedded with `text-embedding-3-small` (1536-dim); uploaded to Pinecone.
 - [x] **DocumentationAgent:** namespace-scoped Pinecone retrieval plus one draft / critique / refine round through `lib/llm.py`. Retrieval balances namespaces, requires event-specific legal bundles using stable `provision_id` metadata, and re-queries missing provisions against the relevant primary documents. The base and primary-recovery queries are embedded in one batch; a second batch of alternate deterministic queries runs only if coverage remains incomplete.
 - [x] **DocumentationAgent evaluation:** two frozen regression cases plus seven held-out cases spanning cancellation, denied boarding, tarmac delay, mixed jurisdictions, route direction, and exception facts. Reflection audits enumerate rule branches and conditions; a no-cost artifact checker validates structure and leaves semantic expected/forbidden findings for human review.
@@ -156,10 +171,10 @@ drop the flag. Nothing around it changes. `pytest` covers the whole path and nee
 - [x] **LLMod.ai endpoint verified with live tests.** Chat and embedding requests use direct `httpx` clients configured only through `LLMOD_API_KEY` and `LLMOD_API_BASE`.
 - [~] `GET /api/agent_info` — route live; `description`, `purpose` and `prompt_template` written (they describe the product, not the code). **Still blocked:**
   - [ ] `prompt_examples[]` — currently `[]`. `full_response` and `steps` must be captured verbatim from a real `/api/execute` run: `steps` has to match the actual LLM calls and the module names in the architecture PNG, and a grader can diff them against a live run. Fill in as the last integration step.
-  - [ ] Revisit the `description` once the flights/hotels data source is decided (§7). It currently says Wingman *proposes* options and books nothing, which is true either way — but if the options turn out to be mock/synthetic rather than real availability, the description has to say so outright.
+  - [ ] Revisit the `description` now the data source is decided (§6). It says Wingman *proposes* options and books nothing, which is still true. It must additionally state that **flight schedules and hotels are real, while prices and fare conditions are estimates** — no free source of fares or seat availability exists.
 - [x] `GET /api/model_architecture` — PNG served with `Content-Type: image/png`, `includeFiles` set in `vercel.json` so it ships in the function bundle; verified in prod. Diagram labels match the locked module names.
 - [x] Error path: `{ "status": "error", "error": "...", "response": null, "steps": [] }` — input validated before dispatch, unexpected failures wrapped in a readable sentence; verified in prod.
-- [~] Multi-turn end-to-end: GUI sends prior `conversation_id`, the route loads history and passes it to `supervisor.run(prompt, history)`, agents see prior context on follow-ups (e.g. "can I take my ski bag on the 09:40?"). Plumbing done and tested against a fake store; **untested against real Supabase** — persistence no-ops until the env vars exist.
+- [~] Multi-turn end-to-end: GUI sends prior `conversation_id`, the route loads history and passes it to `supervisor.run(prompt, history)`, agents see prior context on follow-ups (e.g. "is there anything earlier than the 16:30?" for `FlightAgent`; "can I take my ski bag on it?" is a Contract of Carriage question and belongs to `DocumentationAgent` — see §6). Plumbing done and tested against a fake store; **untested against real Supabase** — persistence no-ops until the env vars exist.
 - [ ] Budget check: log $ per call, confirm total dev+test spend stays well under $13. Cap the reflection loop to one critique pass — Supervisor + FlightAgent + AccommodationAgent + DocumentationAgent(draft+critique+refine) is already ~5–7 LLM calls per user turn.
 
 ### Phase 4 — Test + submit (day 13–16, includes buffer)
@@ -250,12 +265,18 @@ the abstract. Raise these at the first integration checkpoint and log whatever i
 | 8/8/2026 | A failed LLM call still produces a `steps` entry. `lib.llm.LLMError` carries it on `.steps`; the Supervisor appends whatever the exception brings. An agent that makes several calls attaches the ones that already succeeded (`exc.steps = steps + exc.steps`) | The spec says `steps[]` describes **every** LLM call the agent made, in order — a call that was sent and then failed or came back unparseable is still a call. Raising bare dropped it from the trace entirely, and would have silently lost the first two calls of a DocumentationAgent reflection loop that died on the third. |
 | 8/8/2026 | **Interface contract revised** (§1): agents return `(payload, steps)`, not a single step object | The original shape assumed one LLM call per agent. DocumentationAgent's reflection loop is three calls and must emit three `steps` entries, so a single step object could not express it — and the spec requires every LLM call to appear. Splitting the structured result (`payload`, for the Supervisor) from the trace (`steps`, for `/api/execute`) fixes it for every agent, not just that one. Checked `CLAUDE.md` for the old wording per §7; it never restated the contract, so no change was needed there. |
 | 8/8/2026 | Conversation state is best-effort: `load_history`/`save_history` no-op when `SUPABASE_URL`/`SUPABASE_KEY` are unset | The GUI sends a `conversation_id` on every call, so an unconfigured (or briefly unreachable) Supabase turned every single GUI request into `status: "error"`. Degrading to single-turn keeps the agent usable; multi-turn enables itself once the env vars exist, with no code change. |
+| 9/8/2026 | Flights from **AeroDataBox**, hotels from **OpenStreetMap Overpass** | Amadeus Self-Service, the obvious choice, was decommissioned 17/7/2026 and its keys disabled; Kiwi Tequila went invite-only. AeroDataBox has the largest free quota still open to self-signup (600 units/month, 2 units per call); Overpass is keyless, so the hotel half can never be blocked by a quota. |
+| 9/8/2026 | Prices and seat availability are **LLM estimates, labelled as such** | No free source for either exists as of 8/2026. `/api/agent_info`'s `description` must say so (Phase 3). |
+| 9/8/2026 | A tool/HTTP fetch produces **no `steps[]` entry** | The spec ties `steps[]` to LLM calls, and a step's shape requires `prompt.system_prompt`/`user_prompt`, which an HTTP GET has neither of. The fetched data appears inside the agent's LLM `user_prompt` instead, so the trace still shows exactly what drove the answer. **Applies to Person C's Pinecone retrieval too.** |
+| 9/8/2026 | `FlightAgent` **defers baggage/fare/entitlement questions to `DocumentationAgent`** | Schedule data cannot answer what a ticket allows; the Contract of Carriage can, and with a clause citation — which is the project's differentiator. Corrects Phase 3's "ski bag" example and `CLAUDE.md` §3's "check terms", both of which asked FlightAgent for something it has no source for. |
+| 9/8/2026 | Data-source failure **degrades to LLM-only, labelled in `notes`** | The demo must survive an exhausted quota or a flaky Overpass during grading (the public instance returned a 504 during development). Mirrors `lib/conversation.py`'s posture on Supabase. |
+| 9/8/2026 | Airport coordinates ship as a generated **Python module**, not JSON | Vercel's Python builder traces imports, not data files. A `.json` would need a `vercel.json` `includeFiles` change and would fail *only in production*, silently, if the glob were wrong. |
 
 ---
 
 ## 7. Open risks / questions
 
-- No real booking API is named in the spec — flights/hotels data strategy needs a firm answer before Person B can start Phase 2 in earnest. Still open.
+- ~~No real booking API is named in the spec — flights/hotels data strategy needs a firm answer~~ — **resolved 9/8/2026**: AeroDataBox + OpenStreetMap (§6). The live risk is now **quota**: 600 units/month at 2 units per call (≈150–300 searches) shared across the team and grading. Mitigated by a per-instance cache and `WINGMAN_LIVE_DATA=0` in development. Contingency ladder (documented, not built — Supabase-backed cache, per-teammate keys, Lufthansa Open API) in the design doc §10.
 - Reflection loop cost: needs a hard iteration cap decided during DocumentationAgent design, not discovered during a budget overrun.
 - **Unbounded conversation history is a budget risk — decide the cap in Phase 2, before the Supervisor prompt is written.** The route hands the Supervisor every prior turn. If the Supervisor pastes all of it into the prompt, turn N carries N−1 turns of text, so the token cost of a conversation grows quadratically with its length, not linearly. That is multiplied again by the ~5–7 LLM calls each turn already makes. A demo where someone asks four or five follow-ups — exactly the conversational-follow-up story that justifies agents over plain API calls — is where this bites, and $13 is shared across the whole team for the whole project. Options: a fixed last-N turns (simplest, start here), or a running summary the Supervisor maintains. The cap belongs in the Supervisor, since it owns what goes into a prompt; the caller just supplies the full list.
 - Multi-turn is now required (not optional): needs a concrete state model — `conversation_id` + history in Supabase (Person A owns this) — decided once at Phase 1, not re-litigated per PR. Adds a call to load/persist history on every `/api/execute` turn — factor into the $13 budget.

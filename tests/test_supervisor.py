@@ -1,7 +1,8 @@
 """Supervisor logic that does not depend on an LLM: the refinement gate, the date
 sync, the history cap, and the partial-failure policy.
 
-These run against the sub-agent stubs, so no API key and no Supabase are needed.
+FlightAgent and AccommodationAgent now make real LLM calls, so these run against
+the `fake_llm` fixture in tests/conftest.py. No API key and no Supabase are needed.
 """
 
 from datetime import date, datetime, timedelta
@@ -10,6 +11,8 @@ import pytest
 
 from lib.agents import documentation_agent, supervisor
 from lib.steps import make_step
+
+pytestmark = pytest.mark.usefixtures("fake_llm")
 
 COMPLETE = "LH318 TLV -> FRA was cancelled at the gate"
 
@@ -125,12 +128,14 @@ def test_no_stay_window_without_a_flight():
 def test_accommodation_is_booked_for_the_nights_the_flight_implies():
     _, steps = supervisor.run(COMPLETE, [])
     stay = next(s for s in steps if s["module"] == "AccommodationAgent")
-    option = stay["response"]["options"][0]
+    asked = stay["prompt"]["user_prompt"]
 
-    # The stub flight leaves 09:40 tomorrow, so: tonight, one night.
-    assert option["check_in"] == date.today().isoformat()
-    assert option["check_out"] == (date.today() + timedelta(days=1)).isoformat()
-    assert option["nights"] == 1
+    # Assert on what the Supervisor *told* the agent, not on the agent echoing
+    # it back: the date sync is the Supervisor's job, and this is where it shows.
+    # The fake flight leaves 09:40 tomorrow, so: tonight, one night.
+    assert f"Check in: {date.today().isoformat()}" in asked
+    assert f"Check out: {(date.today() + timedelta(days=1)).isoformat()}" in asked
+    assert "Nights: 1" in asked
 
 
 # --- the history cap ------------------------------------------------------------
