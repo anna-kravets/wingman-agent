@@ -10,17 +10,11 @@ points; they do not claim that every other agent is production-complete.
 
 ## Environment setup
 
-The current workspace environment is `..\.conda-env`. Activate it from this repository with:
+Create and activate a new Conda environment, then install the project dependencies:
 
 ```powershell
-conda activate ..\.conda-env
-```
-
-For a fresh standalone clone, create a repository-local environment instead:
-
-```powershell
-conda create --prefix .\.conda-env python=3.12 -y
-conda activate .\.conda-env
+conda create --name wingman-agent python=3.12 -y
+conda activate wingman-agent
 python -m pip install -r requirements.txt
 Copy-Item .env.example .env
 ```
@@ -39,15 +33,6 @@ PINECONE_INDEX_NAME=wingman-legal-docs
 `LLMOD_API_KEY`, `LLMOD_API_BASE`, and `PINECONE_API_KEY` are required by the DocumentationAgent.
 Supabase is optional for local single-turn use; it is used for persisted conversation history.
 The code uses the `LLMOD_*` names directly and has no alternate model-credential fallback.
-
-In the current workspace, commands can also run without activation:
-
-```powershell
-conda run --prefix ..\.conda-env
-```
-
-For a standalone clone that created `.\.conda-env` inside the repository, use
-`conda run --prefix .\.conda-env` instead.
 
 ## Pinecone index prerequisite
 
