@@ -1,30 +1,95 @@
 # Wingman
 
+Wingman is a multi-agent assistant for disrupted airline passengers. `FlightAgent`,
+`AccommodationAgent`, and `DocumentationAgent` are all built: real flight/hotel lookups, and
+airline- and jurisdiction-aware legal retrieval with a grounded draft → critique → refine
+answer flow.
+
+## Environment setup
+
+Create and activate a new Conda environment, then install the project dependencies:
+
+```powershell
+conda create --name wingman-agent python=3.12 -y
+conda activate wingman-agent
+python -m pip install -r requirements.txt
+Copy-Item .env.example .env
+```
+
+Configure `.env` without committing it:
+
+```dotenv
+SUPABASE_URL=
+SUPABASE_KEY=
+LLMOD_API_KEY=
+LLMOD_API_BASE=https://api.llmod.ai/v1
+PINECONE_API_KEY=
+PINECONE_INDEX_NAME=wingman-legal-docs
+```
+
+`LLMOD_API_KEY`, `LLMOD_API_BASE`, and `PINECONE_API_KEY` are required by the DocumentationAgent.
+Supabase is optional for local single-turn use; it is used for persisted conversation history.
+The code uses the `LLMOD_*` names directly and has no alternate model-credential fallback.
+
+## Pinecone index prerequisite
+
+This integration repository reads an existing Pinecone index; it does not bundle the legal source
+corpora or re-ingest them at application startup. The default index is `wingman-legal-docs`.
+
+The companion corpus project must populate these namespaces:
+
+- Conditions of Carriage: `coc-aa`, `coc-ac`, `coc-af`, `coc-al`, `coc-ba`, `coc-dl`, `coc-ek`,
+  `coc-fr`, `coc-lh`, `coc-ly`, `coc-rk`, `coc-rr`, and `coc-ua`.
+- Passenger rights: `rights-eu`, `rights-il`, and `rights-us`.
+
+Runtime searches pin Conditions of Carriage to chunker version `legal-markdown-v2` and passenger
+rights to `legal-markdown-v3-provisions`. Rebuilding the index therefore requires the companion
+corpus ingestion command to preserve those versions and the `document_id`, `provision_id`,
+`section_path`, citation, and source metadata expected by `lib/rag/retrieve.py`.
 
 ## Run locally
 
-From the repo root:
-
-```bash
-py -m venv .venv                  # macOS/Linux: python3 -m venv .venv
-.venv\Scripts\activate            # macOS/Linux: source .venv/bin/activate
-pip install -r requirements.txt
+```powershell
 uvicorn api.index:app --reload
 ```
 
-Then open http://127.0.0.1:8000 — the GUI, `/api/team_info`, `/api/model_architecture`
-and `/api/execute` all work exactly as they do in production.
+Open <http://127.0.0.1:8000>. Run from the repository root so `lib` imports resolve correctly.
+The API endpoints are:
 
-Run it from the repo root, not from `api/`, or the `lib` imports won't resolve.
+- `GET /api/team_info`
+- `GET /api/agent_info`
+- `GET /api/model_architecture`
+- `POST /api/execute` with `{"prompt": "...", "conversation_id": "optional"}`
 
-Without a `.env`, conversation history is not persisted and every call behaves as a
-single turn — the agent still answers. Copy `.env.example` to `.env` once the Supabase
-and LLMod.ai credentials exist.
+## DocumentationAgent behavior
 
-## Run the tests
+The request router selects the airline namespace and every applicable legal namespace from the
+airline, route, and disruption. Retrieval then:
 
-```bash
-pytest
+1. Embeds the passenger question and focused legal-topic queries in one primary batch.
+2. Searches each namespace independently so one source cannot crowd out the others.
+3. Checks event-specific provision coverage deterministically.
+4. Re-queries missing topics with `document_id` and `provision_id` filters.
+5. Uses one alternate-query embedding batch only if primary recovery remains incomplete.
+
+The agent can include up to 20 complete chunks. `MAX_CONTEXT_CHARACTERS` is `None`, because the
+ingestion pipeline already bounds individual chunks and cutting a legal clause mid-passage is less
+safe than supplying the complete selected evidence.
+
+The answer flow is one draft call followed by one critique/refinement round. Configuration lives in
+`lib/agents/documentation_agent.py`:
+
+- `MAX_REFLECTION_ROUNDS = 1`
+- Draft, critique, and refinement completion ceilings: 10,000 tokens each
+- Increasing reflection rounds adds two chat-model calls per round
+
+Completion settings are ceilings, not output targets. Each call is recorded in `steps[]`, and live
+test artifacts also retain token usage and completion finish reasons.
+
+## No-cost tests
+
+```powershell
+pytest -q
 ```
 
 From the repo root. No API key and no database needed: LLM calls go through the
@@ -56,20 +121,66 @@ Regenerate the airport coordinate table (rarely needed — the output is committ
 python scripts/build_airports.py
 ```
 
-## Building an agent
+## Explicitly approved live tests
 
-`DocumentationAgent` in `lib/agents/` is still a stub (`IS_STUB = True`) with the real
-prompts and signatures already in place. Replace the body of `run()`, drop the flag, and
-nothing around it changes. `lib/llm.py` is the only place that talks to LLMod.ai — call
-through it and your `steps` entry is built for you. `FlightAgent` and
-`AccommodationAgent` are built and are worth reading as worked examples: each fetches
-candidates through a `lib/tools/` module, injects them into its prompt, makes exactly one
-LLM call, and validates what comes back. Interface shapes are in `docs/PROJECT_PLAN.md` §1.
+`lib/llm.py` is the only place that talks to LLMod.ai — call through it and your `steps`
+entry is built for you. `FlightAgent` and `AccommodationAgent` are worth reading as worked
+examples: each fetches candidates through a `lib/tools/` module, injects them into its
+prompt, makes exactly one LLM call, and validates what comes back. Interface shapes are in
+`docs/PROJECT_PLAN.md` §1.
 
-## Repo layout
+Live scripts are budget-gated and refuse to run without confirmation flags. A full one-round
+DocumentationAgent test uses one primary embedding request, possibly one fallback embedding
+request, and three chat calls.
 
-Target structure is documented in `docs/PROJECT_PLAN.md` (Phase 0).
+Retrieval only:
 
-## Setup TODOs
+```powershell
+python scripts/run_retrieval_live.py `
+  --confirm-paid-embedding-calls `
+  --scenario ua-us-tarmac-delay `
+  --output live-test-output/ua-retrieval.json
+```
 
-- LLMod.ai API key — waiting on a response from Idan before this can be created.
+Full DocumentationAgent:
+
+```powershell
+python scripts/run_documentation_agent_live.py `
+  --confirm-paid-calls `
+  --reflection-rounds 1 `
+  --scenario ua-us-tarmac-delay `
+  --output live-test-output/ua-agent.json
+```
+
+Evaluate a saved artifact without API or database access:
+
+```powershell
+python scripts/evaluate_documentation_artifact.py `
+  --scenario ua-us-tarmac-delay `
+  --artifact live-test-output/ua-agent.json
+```
+
+The evaluator checks run status, reflection structure, retrieval coverage, citation-label integrity,
+and critique-audit shape. Expected and forbidden legal findings remain an explicit human-review
+rubric because a deterministic string checker cannot reliably judge full legal semantics.
+
+`live-test-output/` is intentionally ignored by Git because artifacts contain large prompts and
+retrieved source excerpts.
+
+## Repository layout
+
+- `api/`: FastAPI/Vercel integration
+- `lib/agents/documentation_agent.py`: grounded response and reflection loop
+- `lib/rag/`: routing, direct LLMod embeddings, Pinecone retrieval, and coverage validation
+- `evals/`: regression and held-out scenarios plus artifact checks
+- `scripts/`: explicitly gated live-test runners
+- `tests/`: no-cost unit and integration tests
+- `docs/PROJECT_PLAN.md`: architecture and project status
+
+## Final verification checklist
+
+1. Confirm the required `.env` variables are configured in the target environment.
+2. Confirm the existing Pinecone index contains the expected namespaces and chunker versions.
+3. Run `pytest -q` without live confirmation flags.
+4. Start the API and inspect `/api/team_info`, `/api/model_architecture`, and `/api/execute`.
+5. Make live model calls only after explicit budget approval.

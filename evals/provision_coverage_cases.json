@@ -1,0 +1,56 @@
+[
+  {
+    "case_id": "eu_cancellation_bundle",
+    "disruption": "cancelled",
+    "namespaces": ["rights-eu"],
+    "expected_provision_ids": [
+      "eu_regulation_261_2004:article_3",
+      "eu_regulation_261_2004:article_5",
+      "eu_regulation_261_2004:article_7",
+      "eu_regulation_261_2004:article_8",
+      "eu_regulation_261_2004:article_9"
+    ]
+  },
+  {
+    "case_id": "israel_cancellation_bundle",
+    "disruption": "cancelled",
+    "namespaces": ["rights-il"],
+    "expected_provision_ids": [
+      "il_aviation_services_law_2012:section_1",
+      "il_aviation_services_law_2012:section_2",
+      "il_aviation_services_law_2012:section_3",
+      "il_aviation_services_law_2012:section_6",
+      "il_aviation_services_law_2012:first_schedule",
+      "il_aviation_services_amendment_2_2025:section_9a"
+    ]
+  },
+  {
+    "case_id": "us_denied_boarding_bundle",
+    "disruption": "denied_boarding",
+    "namespaces": ["rights-us"],
+    "expected_provision_ids": [
+      "us_14_cfr_part_250_oversales:section_250_2",
+      "us_14_cfr_part_250_oversales:section_250_5",
+      "us_14_cfr_part_250_oversales:section_250_6",
+      "us_14_cfr_part_250_oversales:section_250_9"
+    ]
+  },
+  {
+    "case_id": "paris_tel_aviv_el_al_cancellation",
+    "disruption": "cancelled",
+    "namespaces": ["coc-ly", "rights-eu", "rights-il"],
+    "expected_provision_ids": [
+      "eu_regulation_261_2004:article_3",
+      "eu_regulation_261_2004:article_5",
+      "eu_regulation_261_2004:article_7",
+      "eu_regulation_261_2004:article_8",
+      "eu_regulation_261_2004:article_9",
+      "il_aviation_services_law_2012:section_1",
+      "il_aviation_services_law_2012:section_2",
+      "il_aviation_services_law_2012:section_3",
+      "il_aviation_services_law_2012:section_6",
+      "il_aviation_services_law_2012:first_schedule",
+      "il_aviation_services_amendment_2_2025:section_9a"
+    ]
+  }
+]

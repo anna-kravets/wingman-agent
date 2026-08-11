@@ -25,7 +25,7 @@ fight.
 
 **Target audience:** passengers facing a real-time flight disruption at the airport.
 
-**The insight / differentiator:** everyone knows EU 261 / US DOT. Almost nobody uses the airline-specific
+**The insight / differentiator:** everyone knows EU 261 / US DOT / Israeli passenger-rights law. Almost nobody uses the airline-specific
 **Contract of Carriage (CoC)** — a dense, binding, airline-specific document that's the real underused
 leverage point (e.g. rebooking on a competing airline, hotel vouchers). Turning that into an instant,
 plain-language answer is the "aha."
@@ -54,7 +54,7 @@ the agent supports multi-turn.
   exact distance from the terminal and **nothing else** — prices are estimates and meals are
   unconfirmed unless the data says otherwise.
 - **Documentation agent** — pattern: **reflection loop** (draft → self-critique → refine). Produces the
-  rights/entitlements breakdown from regulations (EU 261 / US DOT) *and* the airline's Contract of
+  rights/entitlements breakdown from regulations (EU 261 / US DOT / Israeli law) *and* the airline's Contract of
   Carriage — this is the differentiator, give it the most care.
 
 This is a **high-level** reference, not a finished spec — implementation will need to decide exact module
@@ -66,7 +66,7 @@ boundaries, tool interfaces, and how "conversational follow-up" is represented i
 - **Airline Conditions/Contracts of Carriage** — RAG, ~30MB estimated. Only one example file was
   identified during the assignment (American Airlines CoC); the rest need collecting per-airline before
   this is a usable knowledge base.
-- **Air passenger rights regulations** (EU 261/2004, US DOT) — RAG, ~5MB estimated. Baseline
+- **Air passenger rights regulations** (EU 261/2004, US DOT, Israeli Aviation Services Law) — RAG. Baseline
   entitlements, independent of airline policy.
 
 Use Pinecone (see §5) as the vector store for these; keep retrieval scoped/filtered by airline to avoid
