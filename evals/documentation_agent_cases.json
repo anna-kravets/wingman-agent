@@ -1,0 +1,301 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "case_id": "ly-eu-il-cancellation",
+      "split": "regression",
+      "request": {
+        "airline": "LY",
+        "flight_number": "LY324",
+        "origin": "CDG",
+        "destination": "TLV",
+        "disruption": "cancelled",
+        "stranded_at": "CDG",
+        "party_size": 1,
+        "arrive_by": null,
+        "needs": ["rights"],
+        "local_now": "2026-08-10T20:00:00+03:00",
+        "_passenger_prompt": "My EL AL flight from Paris to Tel Aviv was cancelled at the airport. What assistance, rerouting, refund, and compensation rights apply?"
+      },
+      "expected_namespaces": ["coc-ly", "rights-il", "rights-eu"],
+      "must_cover_topics": [
+        "coc-ly:airline_policy",
+        "rights-il:compensation_amounts",
+        "rights-il:current_amendments",
+        "rights-eu:refund_rerouting",
+        "rights-eu:care",
+        "rights-eu:compensation"
+      ],
+      "expected_findings": [
+        "Israeli and EU passenger-rights regimes must be assessed separately.",
+        "Current Israeli compensation must not be asserted from an expressly historical schedule."
+      ],
+      "forbidden_findings": [
+        "Treating an original Israeli schedule amount as a confirmed current amount.",
+        "Treating extraordinary circumstances as removing care or refund rights automatically."
+      ],
+      "error_categories": ["obsolete_value", "mixed_authority", "missing_condition"]
+    },
+    {
+      "case_id": "aa-us-denied-boarding",
+      "split": "regression",
+      "request": {
+        "airline": "AA",
+        "flight_number": "AA100",
+        "origin": "JFK",
+        "destination": "LAX",
+        "disruption": "denied_boarding",
+        "stranded_at": "JFK",
+        "party_size": 1,
+        "arrive_by": null,
+        "needs": ["rights"],
+        "local_now": "2026-08-11T15:00:00-04:00",
+        "_passenger_prompt": "American Airlines involuntarily denied me boarding at JFK because my flight to Los Angeles was oversold. What rebooking, refund, care, and cash compensation rights do I have?"
+      },
+      "expected_namespaces": ["coc-aa", "rights-us"],
+      "must_cover_topics": [
+        "coc-aa:airline_policy",
+        "rights-us:compensation_domestic",
+        "rights-us:exceptions",
+        "rights-us:notice",
+        "rights-us:compensation_limits",
+        "rights-us:current_enforcement"
+      ],
+      "expected_findings": [
+        "The domestic compensation formula must include the zero, lower, and upper timing branches.",
+        "Another-carrier rebooking must preserve every contractual condition, including passenger request and AA discretion.",
+        "Current adjusted caps must control over obsolete CFR figures for the stated travel date."
+      ],
+      "forbidden_findings": [
+        "Saying compensation is unavailable only when a section 250.6 exception applies.",
+        "Presenting absence of retrieved meal or hotel evidence as proof that no such remedy can exist."
+      ],
+      "error_categories": ["missing_rule_branch", "missing_condition", "obsolete_value", "unsupported_negative"]
+    },
+    {
+      "case_id": "lh-eu-us-cancellation",
+      "split": "holdout",
+      "request": {
+        "airline": "LH",
+        "flight_number": "LH400",
+        "origin": "FRA",
+        "destination": "JFK",
+        "disruption": "cancelled",
+        "stranded_at": "FRA",
+        "party_size": 1,
+        "arrive_by": null,
+        "needs": ["rights"],
+        "local_now": "2026-08-12T12:00:00+02:00",
+        "_passenger_prompt": "Lufthansa cancelled my Frankfurt to New York flight at the airport. What must it provide now, and can I claim compensation?"
+      },
+      "expected_namespaces": ["coc-lh", "rights-us", "rights-eu"],
+      "must_cover_topics": [
+        "coc-lh:airline_policy",
+        "rights-us:refund_rerouting",
+        "rights-eu:refund_rerouting",
+        "rights-eu:care",
+        "rights-eu:exceptions"
+      ],
+      "expected_findings": [
+        "EU cancellation care and refund or rerouting must be distinguished from cash compensation.",
+        "U.S. refund rules and Lufthansa contractual promises must be identified by authority."
+      ],
+      "forbidden_findings": [
+        "Removing EU care solely because the carrier alleges extraordinary circumstances."
+      ],
+      "error_categories": ["mixed_authority", "missing_condition", "unsupported_remedy"]
+    },
+    {
+      "case_id": "dl-us-cancellation-no-eu261",
+      "split": "holdout",
+      "request": {
+        "airline": "DL",
+        "flight_number": "DL46",
+        "origin": "JFK",
+        "destination": "CDG",
+        "disruption": "cancelled",
+        "stranded_at": "JFK",
+        "party_size": 1,
+        "arrive_by": null,
+        "needs": ["rights"],
+        "local_now": "2026-08-12T09:00:00-04:00",
+        "_passenger_prompt": "Delta cancelled my New York to Paris flight. I do not want the replacement flight. What refund and assistance rights apply?"
+      },
+      "expected_namespaces": ["coc-dl", "rights-us"],
+      "must_cover_topics": [
+        "coc-dl:airline_policy",
+        "rights-us:applicability",
+        "rights-us:refund_rerouting",
+        "rights-us:refund_timing"
+      ],
+      "expected_findings": [
+        "The answer must assess the U.S. refund rule and Delta policy.",
+        "EU261 must not be applied merely because the destination is Paris when the flight departs the U.S. on a non-EU carrier.",
+        "Returned ticket value must be classified as a refund, not cash compensation."
+      ],
+      "forbidden_findings": [
+        "Applying EU261 to this route without another supporting fact.",
+        "Classifying return of the unused airfare as cash compensation."
+      ],
+      "error_categories": ["wrong_jurisdiction", "unsupported_remedy", "missing_condition", "remedy_classification"]
+    },
+    {
+      "case_id": "ly-il-us-cancellation-no-eu261",
+      "split": "holdout",
+      "request": {
+        "airline": "LY",
+        "flight_number": "LY1",
+        "origin": "TLV",
+        "destination": "JFK",
+        "disruption": "cancelled",
+        "stranded_at": "TLV",
+        "party_size": 2,
+        "arrive_by": null,
+        "needs": ["rights"],
+        "local_now": "2026-08-12T18:00:00+03:00",
+        "_passenger_prompt": "EL AL cancelled our Tel Aviv to New York flight. What refund, replacement flight, care, and compensation can the two of us request?"
+      },
+      "expected_namespaces": ["coc-ly", "rights-il", "rights-us"],
+      "must_cover_topics": [
+        "coc-ly:airline_policy",
+        "rights-il:care",
+        "rights-il:compensation_amounts",
+        "rights-il:current_amendments",
+        "rights-us:refund_rerouting"
+      ],
+      "expected_findings": [
+        "Amendment-sensitive Israeli amounts must not be presented as confirmed current values.",
+        "Any total for two passengers must be derived from a supported per-passenger current amount."
+      ],
+      "forbidden_findings": [
+        "Applying EU261 to a Tel Aviv departure solely because EL AL flies to Europe on other routes.",
+        "Multiplying an obsolete Israeli amount by the party size as a current entitlement."
+      ],
+      "error_categories": ["wrong_jurisdiction", "obsolete_value", "arithmetic_grounding"]
+    },
+    {
+      "case_id": "ua-us-international-denied-boarding",
+      "split": "holdout",
+      "request": {
+        "airline": "UA",
+        "flight_number": "UA960",
+        "origin": "EWR",
+        "destination": "FRA",
+        "disruption": "denied_boarding",
+        "stranded_at": "EWR",
+        "party_size": 1,
+        "arrive_by": null,
+        "needs": ["rights"],
+        "local_now": "2026-08-12T17:00:00-04:00",
+        "_passenger_prompt": "United involuntarily denied me boarding in Newark because the Frankfurt flight was oversold. What are my rebooking and cash-compensation rights?"
+      },
+      "expected_namespaces": ["coc-ua", "rights-us"],
+      "must_cover_topics": [
+        "coc-ua:airline_policy",
+        "rights-us:compensation_international",
+        "rights-us:exceptions",
+        "rights-us:notice",
+        "rights-us:compensation_limits"
+      ],
+      "expected_findings": [
+        "The U.S.-origin international 1-to-4-hour formula must be used.",
+        "The domestic 1-to-2-hour formula must be identified as inapplicable."
+      ],
+      "forbidden_findings": ["Using the domestic two-hour threshold for this international itinerary."],
+      "error_categories": ["wrong_rule_branch", "missing_condition", "obsolete_value"]
+    },
+    {
+      "case_id": "ba-eu-cancellation",
+      "split": "holdout",
+      "request": {
+        "airline": "BA",
+        "flight_number": "BA309",
+        "origin": "CDG",
+        "destination": "LHR",
+        "disruption": "cancelled",
+        "stranded_at": "CDG",
+        "party_size": 1,
+        "arrive_by": null,
+        "needs": ["rights"],
+        "local_now": "2026-08-12T10:00:00+02:00",
+        "_passenger_prompt": "British Airways cancelled my Paris to London flight after I reached the airport. What must BA offer, and what depends on the cause or notice timing?"
+      },
+      "expected_namespaces": ["coc-ba", "rights-eu"],
+      "must_cover_topics": [
+        "coc-ba:airline_policy",
+        "rights-eu:event_entitlement",
+        "rights-eu:refund_rerouting",
+        "rights-eu:care",
+        "rights-eu:exceptions"
+      ],
+      "expected_findings": [
+        "EU261 applies because the flight departs Paris.",
+        "Care, refund or rerouting, and compensation conditions must remain separate."
+      ],
+      "forbidden_findings": ["Treating extraordinary circumstances as eliminating Article 8 or Article 9 rights."],
+      "error_categories": ["missing_condition", "mixed_remedy", "unsupported_remedy"]
+    },
+    {
+      "case_id": "lh-eu-il-weather-cancellation",
+      "split": "holdout",
+      "request": {
+        "airline": "LH",
+        "flight_number": "LH690",
+        "origin": "FRA",
+        "destination": "TLV",
+        "disruption": "cancelled",
+        "stranded_at": "FRA",
+        "party_size": 1,
+        "arrive_by": null,
+        "needs": ["rights"],
+        "local_now": "2026-08-12T19:00:00+02:00",
+        "_passenger_prompt": "Lufthansa says severe weather caused the cancellation of my Frankfurt to Tel Aviv flight. Do I still get meals, a hotel, rerouting or refund, and compensation?"
+      },
+      "expected_namespaces": ["coc-lh", "rights-il", "rights-eu"],
+      "must_cover_topics": [
+        "coc-lh:airline_policy",
+        "rights-il:care",
+        "rights-il:exceptions",
+        "rights-eu:care",
+        "rights-eu:exceptions"
+      ],
+      "expected_findings": [
+        "A weather allegation must be evaluated as a compensation issue without automatically removing care or refund and rerouting.",
+        "Israeli and EU exceptions must not be assumed identical."
+      ],
+      "forbidden_findings": ["Saying severe weather automatically removes every passenger entitlement."],
+      "error_categories": ["mixed_authority", "overbroad_exception", "missing_condition"]
+    },
+    {
+      "case_id": "ua-us-tarmac-delay",
+      "split": "holdout",
+      "request": {
+        "airline": "UA",
+        "flight_number": "UA123",
+        "origin": "EWR",
+        "destination": "ORD",
+        "disruption": "delayed",
+        "stranded_at": "EWR",
+        "party_size": 1,
+        "arrive_by": null,
+        "needs": ["rights"],
+        "local_now": "2026-08-12T14:00:00-04:00",
+        "_passenger_prompt": "My United flight has been sitting on the Newark tarmac for five hours. What food, water, deplaning, refund, and cash-compensation rights apply?"
+      },
+      "expected_namespaces": ["coc-ua", "rights-us"],
+      "must_cover_topics": [
+        "coc-ua:airline_policy",
+        "rights-us:refund_rerouting",
+        "rights-us:refund_timing",
+        "rights-us:care",
+        "rights-us:tarmac_deplaning"
+      ],
+      "expected_findings": [
+        "Tarmac-delay care and deplaning rules must be distinguished from a general cash-compensation right.",
+        "A federal cash-compensation entitlement must not be invented from delay duration alone."
+      ],
+      "forbidden_findings": ["Inventing automatic U.S. cash compensation for a five-hour delay."],
+      "error_categories": ["unsupported_remedy", "wrong_rule_branch", "missing_condition"]
+    }
+  ]
+}

@@ -19,6 +19,7 @@ def configured(monkeypatch):
 
 def test_missing_config_raises_without_a_step(monkeypatch):
     monkeypatch.delenv("LLMOD_API_KEY", raising=False)
+    monkeypatch.delenv("LLMOD_API_BASE", raising=False)
 
     with pytest.raises(llm.LLMError) as caught:
         llm.call("Supervisor", "sys", "user")

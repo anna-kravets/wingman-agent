@@ -9,10 +9,32 @@ from datetime import date, datetime, timedelta
 import pytest
 
 from lib.agents import documentation_agent, supervisor
+from lib.steps import make_step
 
 COMPLETE = "LH318 TLV -> FRA was cancelled at the gate"
 
 MODULES = {"Supervisor", "FlightAgent", "AccommodationAgent", "DocumentationAgent"}
+
+
+@pytest.fixture(autouse=True)
+def no_cost_documentation_agent(monkeypatch):
+    """The harness tests exercise orchestration, not paid retrieval/model calls."""
+
+    payload = {
+        "regulation": "EU 261/2004",
+        "entitlements": [],
+        "next_actions": [],
+        "caveats": [],
+    }
+
+    def fake_run(request, history):
+        steps = [
+            make_step("DocumentationAgent", phase, "test request", payload)
+            for phase in ("draft", "critique", "refine")
+        ]
+        return payload, steps
+
+    monkeypatch.setattr(documentation_agent, "run", fake_run)
 
 
 def modules_of(steps):

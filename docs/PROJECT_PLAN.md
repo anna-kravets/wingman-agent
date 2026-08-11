@@ -82,8 +82,8 @@ load-bearing: the date sync derives the hotel nights from the chosen flight's de
  "recommended_id": "H1"}
 
 # DocumentationAgent
-{"regulation": "EU 261/2004" | "US DOT" | "none",
- "entitlements": [{"kind": "rebooking" | "hotel" | "meals" | "cash_compensation" | "other",
+{"regulation": "EU 261/2004" | "US DOT" | "Israel Aviation Services Law" | "multiple" | "none",
+ "entitlements": [{"kind": "rebooking" | "refund" | "hotel" | "meals" | "cash_compensation" | "other",
                    "summary", "source", "confidence": "high" | "medium" | "low"}],
  "next_actions": [str], "caveats": [str]}
 ```
@@ -147,12 +147,13 @@ drop the flag. Nothing around it changes. `pytest` covers the whole path and nee
   - [x] **Partial-failure policy:** one sub-agent raising must not lose the rest of the plan; the passenger is told what is missing. A failed flight search skips accommodation rather than guessing the nights.
 - [~] **FlightAgent:** role prompt + one-shot example written; stub returns the payload shape. Person B replaces `run()`.
 - [~] **AccommodationAgent:** role prompt + one-shot example written; stub returns the payload shape, for the nights the Supervisor derives from the chosen flight. Person B replaces `run()`.
-- [ ] **Data pipeline** (start early — blocks DocumentationAgent): collect EU261 + US DOT text, 3–5 airline CoCs, chunk, embed via `text-embedding-3-small` (1536-dim), upsert to Pinecone with an `airline` metadata field for filtered retrieval
-- [~] **DocumentationAgent:** draft / critique / refine prompts written; stub emits all three steps so the trace shape is right. Person C replaces `run()` with the real loop over the RAG index, scoped/filtered by airline. 
+- [x] **Data pipeline:** collected EU, US, and Israeli passenger-rights material plus 13 airline/operator CoC namespaces; section-aware chunking; embedded with `text-embedding-3-small` (1536-dim); uploaded to Pinecone.
+- [x] **DocumentationAgent:** namespace-scoped Pinecone retrieval plus one draft / critique / refine round through `lib/llm.py`. Retrieval balances namespaces, requires event-specific legal bundles using stable `provision_id` metadata, and re-queries missing provisions against the relevant primary documents. The base and primary-recovery queries are embedded in one batch; a second batch of alternate deterministic queries runs only if coverage remains incomplete.
+- [x] **DocumentationAgent evaluation:** two frozen regression cases plus seven held-out cases spanning cancellation, denied boarding, tarmac delay, mixed jurisdictions, route direction, and exception facts. Reflection audits enumerate rule branches and conditions; a no-cost artifact checker validates structure and leaves semantic expected/forbidden findings for human review.
 
 ### Phase 3 — Integration (day 10–13)
 - [~] Supervisor calls all 3 sub-agents, aggregates response, produces full end-to-end `steps` trace — working against the stubs and covered by `tests/`. Re-verify as each real agent lands.
-- [ ] **Verify `lib/llm.py` against the real LLMod.ai endpoint the day the key arrives.** The request/response shape is currently *assumed* OpenAI-compatible (`POST {base}/chat/completions`) and has never been run. If it differs, that file is the only thing to change — but nothing works until it is checked.
+- [x] **LLMod.ai endpoint verified with live tests.** Chat and embedding requests use direct `httpx` clients configured only through `LLMOD_API_KEY` and `LLMOD_API_BASE`.
 - [~] `GET /api/agent_info` — route live; `description`, `purpose` and `prompt_template` written (they describe the product, not the code). **Still blocked:**
   - [ ] `prompt_examples[]` — currently `[]`. `full_response` and `steps` must be captured verbatim from a real `/api/execute` run: `steps` has to match the actual LLM calls and the module names in the architecture PNG, and a grader can diff them against a live run. Fill in as the last integration step.
   - [ ] Revisit the `description` once the flights/hotels data source is decided (§7). It currently says Wingman *proposes* options and books nothing, which is true either way — but if the options turn out to be mock/synthetic rather than real availability, the description has to say so outright.
@@ -191,8 +192,8 @@ No dedicated task tracker or comms channel — team coordinates directly (§6).
 
 ## 4. Data sources (RAG corpus — not yet collected)
 
-- **Airline Contracts/Conditions of Carriage** — est. ~30MB. Only American Airlines was sourced during Assignment 2; the rest need collecting.
-- **Passenger rights regulations** — EU 261/2004, US DOT — est. ~5MB. Baseline entitlements, independent of airline policy.
+- **Airline Contracts/Conditions of Carriage** — collected for 10 major airlines plus separate Ryanair-group operating codes where applicable.
+- **Passenger rights regulations** — EU 261/2004, US DOT, and Israeli Aviation Services Law, including relevant guidance and amendments.
 
 Retrieval must be scoped/filtered by airline to avoid irrelevant CoC clauses bloating context (budget discipline).
 

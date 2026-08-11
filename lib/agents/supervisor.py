@@ -193,6 +193,10 @@ def run(prompt: str, history: list[dict]) -> tuple[str, list[dict]]:
     steps: list[dict] = []
 
     request, refine_step = _extract_request(prompt, history)
+    # Keep the current utterance available to sub-agents. It is intentionally an
+    # internal field: the locked structured-request schema can stay unchanged, while
+    # follow-up questions do not disappear during extraction.
+    request["_passenger_prompt"] = prompt.strip()
     steps.append(refine_step)
 
     # The gate: never dispatch a crew against a request that is missing what it needs.

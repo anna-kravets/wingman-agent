@@ -9,9 +9,7 @@ Token usage is accumulated here for the same reason: it is the only place that
 sees every call, so it is the only place that can answer "how much of the $13 did
 that turn cost".
 
-UNVERIFIED: the request/response shape below assumes LLMod.ai is OpenAI-compatible
-(`POST {base}/chat/completions`). Nobody has had a key yet. Confirm against the real
-endpoint the moment one exists — if it differs, this file is the only thing to change.
+The LLMod.ai chat endpoint is called directly at `POST {base}/chat/completions`.
 """
 
 import json
@@ -28,7 +26,12 @@ TIMEOUT_SECONDS = 60
 
 # Accumulated across the process, read by the budget check. Serverless instances are
 # recycled, so this is a per-instance figure for dev — not a running project total.
-usage = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0}
+usage = {
+    "calls": 0,
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "finish_reasons": [],
+}
 
 
 class LLMError(RuntimeError):
@@ -63,6 +66,7 @@ def call(
     user_prompt: str,
     *,
     expect_json: bool = False,
+    max_completion_tokens: int | None = None,
 ) -> tuple[object, dict]:
     """Make one LLM call. Returns (response, step).
 
@@ -82,6 +86,10 @@ def call(
     }
     if expect_json:
         body["response_format"] = {"type": "json_object"}
+    if max_completion_tokens is not None:
+        if max_completion_tokens <= 0:
+            raise ValueError("max_completion_tokens must be positive")
+        body["max_completion_tokens"] = max_completion_tokens
 
     def failed(reason: str) -> LLMError:
         step = make_step(module, system_prompt, user_prompt, {"error": reason})
@@ -106,6 +114,7 @@ def call(
     usage["calls"] += 1
     usage["prompt_tokens"] += counts.get("prompt_tokens", 0)
     usage["completion_tokens"] += counts.get("completion_tokens", 0)
+    usage["finish_reasons"].append(data["choices"][0].get("finish_reason"))
 
     if expect_json:
         try:

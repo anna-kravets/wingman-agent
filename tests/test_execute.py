@@ -9,7 +9,8 @@ from fastapi.testclient import TestClient
 
 from api.index import app
 from lib import conversation
-from lib.agents import supervisor
+from lib.agents import documentation_agent, supervisor
+from lib.steps import make_step
 
 client = TestClient(app)
 
@@ -17,6 +18,24 @@ COMPLETE = "LH318 TLV -> FRA was cancelled at the gate"
 
 TOP_LEVEL = {"status", "error", "response", "steps"}
 MODULES = {"Supervisor", "FlightAgent", "AccommodationAgent", "DocumentationAgent"}
+
+
+@pytest.fixture(autouse=True)
+def no_cost_documentation_agent(monkeypatch):
+    payload = {
+        "regulation": "EU 261/2004",
+        "entitlements": [],
+        "next_actions": [],
+        "caveats": [],
+    }
+
+    def fake_run(request, history):
+        return payload, [
+            make_step("DocumentationAgent", phase, "test request", payload)
+            for phase in ("draft", "critique", "refine")
+        ]
+
+    monkeypatch.setattr(documentation_agent, "run", fake_run)
 
 
 # --- POST /api/execute ----------------------------------------------------------

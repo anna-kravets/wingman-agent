@@ -3,6 +3,9 @@ __pycache__/
 *.pyc
 *.pyo
 *.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
 .venv/
 venv/
 env/
@@ -25,6 +28,7 @@ Thumbs.db
 
 # Logs
 *.log
+live-test-output/
 
 # project guidelines
 guidelines/
