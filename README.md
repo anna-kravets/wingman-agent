@@ -20,7 +20,7 @@ Configure `.env` without committing it:
 
 ```dotenv
 SUPABASE_URL=
-SUPABASE_KEY=
+SUPABASE_SERVICE_ROLE_KEY=
 LLMOD_API_KEY=
 LLMOD_API_BASE=https://api.llmod.ai/v1
 PINECONE_API_KEY=
@@ -29,6 +29,16 @@ PINECONE_INDEX_NAME=wingman-legal-docs
 
 `LLMOD_API_KEY`, `LLMOD_API_BASE`, and `PINECONE_API_KEY` are required by the DocumentationAgent.
 Supabase is optional for local single-turn use; it is used for persisted conversation history.
+For an existing Supabase project, follow `docs/SUPABASE_HANDOFF_ANNA.md` and run
+`supabase/migrations/202608120001_anonymous_conversation_owners.sql` once in the Supabase SQL editor.
+For a fresh project, `docs/schema.sql` contains the complete table definition.
+
+The no-login UI uses a one-year, HTTP-only `wingman_device_id` cookie. It scopes conversation rows
+to that anonymous browser installation; it is not a user account and does not synchronize chats
+across different browsers or devices. The browser also keeps a local cache for immediate rendering.
+`SUPABASE_SERVICE_ROLE_KEY` is server-only and must never be placed in `public/` or exposed to browser
+JavaScript. The older `SUPABASE_KEY` name remains a temporary code fallback for existing deployments,
+but production should use the explicit service-role variable.
 The code uses the `LLMOD_*` names directly and has no alternate model-credential fallback.
 
 ## Pinecone index prerequisite
@@ -59,6 +69,8 @@ The API endpoints are:
 - `GET /api/team_info`
 - `GET /api/agent_info`
 - `GET /api/model_architecture`
+- `GET /api/conversations` to restore conversations belonging to the anonymous device cookie
+- `DELETE /api/conversations/{conversation_id}` to delete an owned conversation
 - `POST /api/execute` with `{"prompt": "...", "conversation_id": "optional"}`
 
 ## DocumentationAgent behavior

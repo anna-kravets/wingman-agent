@@ -1,7 +1,11 @@
+import hashlib
+import logging
+import re
+import secrets
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -11,10 +15,14 @@ from lib import conversation
 from lib.agents import supervisor
 
 app = FastAPI()
+logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ARCHITECTURE_PNG = REPO_ROOT / "architecture_diagram" / "architecture_diagram.png"
 PUBLIC_DIR = REPO_ROOT / "public"
+DEVICE_COOKIE = "wingman_device_id"
+DEVICE_COOKIE_MAX_AGE = 60 * 60 * 24 * 365
+DEVICE_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_-]{43}$")
 
 TEAM_INFO = {
     "group_batch_order_number": "2_6",
@@ -109,8 +117,56 @@ def _error(message: str) -> dict:
     return {"status": "error", "error": message, "response": None, "steps": []}
 
 
+def _device_id(request: Request, response: Response) -> str:
+    candidate = request.cookies.get(DEVICE_COOKIE, "")
+    device_token = (
+        candidate if DEVICE_TOKEN_PATTERN.fullmatch(candidate) else secrets.token_urlsafe(32)
+    )
+    owner_id = hashlib.sha256(device_token.encode("ascii")).hexdigest()
+
+    forwarded_scheme = request.headers.get("x-forwarded-proto", "").split(",", 1)[0]
+    response.set_cookie(
+        DEVICE_COOKIE,
+        device_token,
+        max_age=DEVICE_COOKIE_MAX_AGE,
+        httponly=True,
+        secure=request.url.scheme == "https" or forwarded_scheme == "https",
+        samesite="lax",
+        path="/",
+    )
+    return owner_id
+
+
+def _conversation_title(prompt: str) -> str:
+    clean = " ".join(prompt.split())
+    return clean if len(clean) <= 45 else f"{clean[:45].rstrip()}…"
+
+
+@app.get("/api/conversations")
+def conversations(request: Request, response: Response):
+    owner_id = _device_id(request, response)
+    try:
+        items = conversation.list_conversations(owner_id)
+    except Exception:
+        response.status_code = 503
+        return {"status": "error", "error": "Conversation history is temporarily unavailable."}
+    return {"status": "ok", "conversations": items}
+
+
+@app.delete("/api/conversations/{conversation_id}")
+def delete_conversation(conversation_id: str, request: Request, response: Response):
+    owner_id = _device_id(request, response)
+    try:
+        conversation.delete_conversation(owner_id, conversation_id)
+    except Exception:
+        response.status_code = 503
+        return {"status": "error", "error": "The conversation could not be deleted."}
+    return {"status": "ok"}
+
+
 @app.post("/api/execute")
-async def execute(request: Request):
+async def execute(request: Request, response: Response):
+    owner_id = _device_id(request, response)
     try:
         body = await request.json()
     except Exception:
@@ -123,15 +179,33 @@ async def execute(request: Request):
     conversation_id = body.get("conversation_id")
 
     try:
-        history = conversation.load_history(conversation_id) if conversation_id else []
+        history = (
+            conversation.load_history(owner_id, conversation_id) if conversation_id else []
+        )
+    except Exception:
+        logger.exception("Conversation history load failed; continuing as a single turn")
+        history = []
 
+    try:
         response_text, steps = supervisor.run(prompt, history)
-
-        if conversation_id:
-            turn = {"prompt": prompt, "response": response_text}
-            conversation.save_history(conversation_id, history + [turn])
     except Exception as exc:
         return _error(f"The agent failed while handling the request: {exc}")
+
+    if conversation_id:
+        turn = {"prompt": prompt, "response": response_text}
+        first_turn = history[0] if history and isinstance(history[0], dict) else {}
+        first_prompt = first_turn.get("prompt", prompt)
+        if not isinstance(first_prompt, str):
+            first_prompt = prompt
+        try:
+            conversation.save_history(
+                owner_id,
+                conversation_id,
+                history + [turn],
+                _conversation_title(first_prompt),
+            )
+        except Exception:
+            logger.exception("Conversation history save failed; returning the agent response")
 
     return {
         "status": "ok",
