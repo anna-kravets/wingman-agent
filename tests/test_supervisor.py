@@ -12,7 +12,7 @@ import pytest
 from lib.agents import documentation_agent, supervisor
 from lib.steps import make_step
 
-pytestmark = pytest.mark.usefixtures("fake_llm")
+pytestmark = pytest.mark.usefixtures("fake_llm", "fake_search_data")
 
 COMPLETE = "LH318 TLV -> FRA was cancelled at the gate"
 

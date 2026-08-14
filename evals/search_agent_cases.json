@@ -34,7 +34,7 @@
       "request_override": {"party_size": 1},
       "local_now": {"offset_days": 0, "time": "22:00"},
       "live_data": true,
-      "checks": ["trace_shape", "grounding_flights", "no_booking_site", "price_honesty"],
+      "checks": ["trace_shape", "grounding_flights", "degraded_refusal", "no_booking_site", "price_honesty"],
       "expect": {}
     },
     {
@@ -76,25 +76,25 @@
     {
       "case_id": "degraded-flights",
       "title": "Live data switched off",
-      "probes": ["degraded_labelling"],
+      "probes": ["degraded_refusal"],
       "prompt": "LH318 TLV -> FRA was cancelled at the gate",
       "history": [],
       "request_override": {"party_size": 1},
       "local_now": {"offset_days": 0, "time": "22:15"},
       "live_data": false,
-      "checks": ["trace_shape", "degraded_labelling", "no_booking_site"],
+      "checks": ["trace_shape", "degraded_refusal", "no_booking_site"],
       "expect": {}
     },
     {
       "case_id": "sparse-osm-airport",
-      "title": "Airport OpenStreetMap barely covers",
+      "title": "Airport OpenStreetMap barely covers (Ramon/Eilat)",
       "probes": ["hotel_coverage_limits"],
-      "prompt": "LY123 VDA -> TLV was cancelled",
+      "prompt": "LY123 ETM -> TLV was cancelled",
       "history": [],
-      "request_override": {"party_size": 1, "stranded_at": "VDA"},
+      "request_override": {"party_size": 1, "stranded_at": "ETM"},
       "local_now": {"offset_days": 0, "time": "22:15"},
       "live_data": true,
-      "checks": ["trace_shape"],
+      "checks": ["trace_shape", "degraded_refusal"],
       "expect": {}
     },
     {

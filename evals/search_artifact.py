@@ -199,21 +199,24 @@ def _check_meals_honesty(artifact, case):
     return _result("meals_honesty", not problems, "; ".join(problems) or "meals stated honestly")
 
 
-def _check_degraded_labelling(artifact, case):
-    problems = []
-    checked = 0
-    for module in ("FlightAgent", "AccommodationAgent"):
-        step = _step(artifact, module)
-        if not step or candidates_from_prompt(step["prompt"]["user_prompt"]):
-            continue
-        for option in _options(step):
-            checked += 1
-            if "illustrative" not in str(option.get("notes", "")).lower():
-                problems.append(f"{module}/{option.get('id')} is unlabelled")
-    if not checked:
-        return _result("degraded_labelling", True, "nothing ran degraded", skip=True)
-    return _result("degraded_labelling", not problems,
-                   "; ".join(problems) or f"all {checked} options labelled illustrative")
+def _check_degraded_refusal(artifact, case):
+    """With no verified candidates the agent must refuse, and say so.
+
+    Reverses the earlier "degrade to labelled illustrative options" decision. Live
+    validation on 10/8/2026 found the model refuses to invent anyway, and a
+    fabricated flight number for a real airline is actionable: a passenger can go
+    and ask for it. Refusing costs an LLM call less, too.
+    """
+    step = _step(artifact, "FlightAgent")
+    if step and candidates_from_prompt(step["prompt"]["user_prompt"]):
+        return _result("degraded_refusal", True, "live candidates were available", skip=True)
+    if step:
+        return _result("degraded_refusal", False,
+                       "the model was called with no verified candidates to choose from")
+    told = "onward flights" in str(artifact.get("response", "")).lower()
+    return _result("degraded_refusal", told,
+                   "refused, and the passenger was told why" if told
+                   else "refused silently - the passenger was never told")
 
 
 def _check_deferral(artifact, case):
@@ -251,7 +254,7 @@ CHECKS = {
     "price_honesty": _check_price_honesty,
     "no_asserted_fare": _check_no_asserted_fare,
     "meals_honesty": _check_meals_honesty,
-    "degraded_labelling": _check_degraded_labelling,
+    "degraded_refusal": _check_degraded_refusal,
     "deferral": _check_deferral,
     "history_reached_agents": _check_history_reached_agents,
 }

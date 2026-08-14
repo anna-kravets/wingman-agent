@@ -57,9 +57,10 @@ Response:
  "recommended_id": "F1"}
 """
 
-DEGRADED_NOTE = (
-    "No live schedule data was available for this route. Propose plausible options from your own "
-    "knowledge, and put 'Illustrative option - not live availability.' in the notes of every one."
+NO_LIVE_DATA = (
+    "live flight schedules were not available for this route, so no departure could be "
+    "verified. Nothing was invented - check your airline's app or the departures board for "
+    "the next flight."
 )
 
 
@@ -74,11 +75,8 @@ def _user_prompt(request: dict, history: list[dict], candidates: list[dict]) -> 
         f"Local time now: {request.get('local_now')}",
         "",
     ]
-    if candidates:
-        lines.append("Candidates (real, verified departures - choose only from these):")
-        lines.append(json.dumps(candidates, ensure_ascii=False))
-    else:
-        lines.append(DEGRADED_NOTE)
+    lines.append("Candidates (real, verified departures - choose only from these):")
+    lines.append(json.dumps(candidates, ensure_ascii=False))
 
     if history:
         lines.append("")
@@ -122,6 +120,15 @@ def run(request: dict, history: list[dict]) -> tuple[dict, list[dict]]:
     """Returns (payload, steps). See `docs/PROJECT_PLAN.md` §1 for both shapes."""
     after = datetime.fromisoformat(request["local_now"])
     candidates = flights.search(request.get("origin"), request.get("destination"), after)
+
+    if not candidates:
+        # No LLM call at all. With nothing verified to choose from, the only honest
+        # answer is that we do not know: a fabricated flight number for a real airline
+        # is actionable, and a stressed passenger may go and ask for it at the desk.
+        # Live validation on 10/8/2026 found the model refuses here anyway, which is
+        # why the earlier "degrade to labelled illustrative options" decision was
+        # reversed. `steps` is empty because no call was made.
+        raise llm.LLMError(f"{MODULE}: {NO_LIVE_DATA}", steps=[])
 
     payload, step = llm.call(
         MODULE, SYSTEM_PROMPT, _user_prompt(request, history, candidates), expect_json=True

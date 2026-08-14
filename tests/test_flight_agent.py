@@ -62,13 +62,20 @@ def test_one_llm_call_produces_exactly_one_step(monkeypatch):
     assert steps[0]["module"] == "FlightAgent"
 
 
-def test_degraded_mode_tells_the_model_to_label_its_output(monkeypatch):
+def test_no_candidates_refuses_without_calling_the_model(monkeypatch):
+    called = []
     monkeypatch.setattr(flights, "search", lambda *a, **k: [])
-    monkeypatch.setattr(llm, "call", fake_call(good_payload()))
+    monkeypatch.setattr(llm, "call", lambda *a, **k: called.append(1))
 
-    _, steps = flight_agent.run(REQUEST, [])
+    with pytest.raises(llm.LLMError) as caught:
+        flight_agent.run(REQUEST, [])
 
-    assert "Illustrative" in steps[0]["prompt"]["user_prompt"]
+    # Live validation (10/8/2026) showed the model refuses to invent here anyway, and
+    # a fabricated flight number for a real airline is actionable. So: no call, no cost,
+    # no step - and the passenger is told plainly.
+    assert not called
+    assert caught.value.steps == []
+    assert "Nothing was invented" in str(caught.value)
 
 
 def test_options_with_unparseable_times_are_dropped(monkeypatch):

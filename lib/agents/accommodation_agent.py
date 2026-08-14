@@ -52,9 +52,10 @@ Response:
  "recommended_id": "H1"}
 """
 
-DEGRADED_NOTE = (
-    "No live hotel data was available for this airport. Propose plausible options from your own "
-    "knowledge, and put 'Illustrative option - not live availability.' in the notes of every one."
+NO_LIVE_DATA = (
+    "no hotels could be found near this airport in OpenStreetMap, so nothing could be "
+    "verified. Nothing was invented - ask at the airline's desk, which is also where a "
+    "hotel voucher would be issued if you are owed one."
 )
 
 
@@ -69,11 +70,8 @@ def _user_prompt(request: dict, stay_window: dict, history: list[dict],
         f"Onward flight departs: {stay_window.get('departs')}",
         "",
     ]
-    if candidates:
-        lines.append("Hotels (real, near the airport - choose only from these):")
-        lines.append(json.dumps(candidates, ensure_ascii=False))
-    else:
-        lines.append(DEGRADED_NOTE)
+    lines.append("Hotels (real, near the airport - choose only from these):")
+    lines.append(json.dumps(candidates, ensure_ascii=False))
 
     if history:
         lines.append("")
@@ -121,6 +119,11 @@ def _validate(payload: dict, stay_window: dict) -> dict:
 def run(request: dict, stay_window: dict, history: list[dict]) -> tuple[dict, list[dict]]:
     """Returns (payload, steps). See `docs/PROJECT_PLAN.md` §1 for both shapes."""
     candidates = hotels.search(request.get("stranded_at"))
+
+    if not candidates:
+        # Same reasoning as FlightAgent: no verified property, no invention, no LLM call.
+        # A named hotel that does not exist sends a tired passenger to the wrong place.
+        raise llm.LLMError(f"{MODULE}: {NO_LIVE_DATA}", steps=[])
 
     payload, step = llm.call(
         MODULE, SYSTEM_PROMPT,

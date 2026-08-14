@@ -180,17 +180,30 @@ def test_deferral_passes_when_it_points_at_the_contract():
 # --- degraded and trace ---------------------------------------------------------
 
 
-def test_degraded_labelling_requires_the_illustrative_note():
+def test_degraded_refusal_passes_when_the_agent_did_not_run_and_the_passenger_was_told():
+    # No FlightAgent step at all: it refused before spending a call.
+    art = {"status": "ok",
+           "response": "Could not complete: onward flights (live schedules unavailable)",
+           "steps": [step("Supervisor", "refine", {}), step("Supervisor", "compose", {})]}
+    assert status_of(evaluate(art, case_with("degraded_refusal")), "degraded_refusal") == "pass"
+
+
+def test_degraded_refusal_fails_when_the_passenger_was_never_told():
+    art = {"status": "ok", "response": "Here is your plan.",
+           "steps": [step("Supervisor", "refine", {}), step("Supervisor", "compose", {})]}
+    assert status_of(evaluate(art, case_with("degraded_refusal")), "degraded_refusal") == "fail"
+
+
+def test_degraded_refusal_fails_if_the_model_was_called_with_no_candidates():
+    # Calling the model with nothing to choose from is the behaviour we removed.
     art = artifact_with([GOOD_FLIGHT], None,
                         flight_prompt_text=flight_prompt(candidates=None))
-    results = evaluate(art, case_with("degraded_labelling"))
-    assert status_of(results, "degraded_labelling") == "fail"
+    assert status_of(evaluate(art, case_with("degraded_refusal")), "degraded_refusal") == "fail"
 
-    labelled = dict(GOOD_FLIGHT, notes="Illustrative option - not live availability.")
-    art = artifact_with([labelled], None,
-                        flight_prompt_text=flight_prompt(candidates=None))
-    results = evaluate(art, case_with("degraded_labelling"))
-    assert status_of(results, "degraded_labelling") == "pass"
+
+def test_degraded_refusal_is_skipped_when_candidates_existed():
+    art = artifact_with([GOOD_FLIGHT], [GOOD_HOTEL])
+    assert status_of(evaluate(art, case_with("degraded_refusal")), "degraded_refusal") == "skip"
 
 
 def test_trace_shape_requires_one_step_per_agent():

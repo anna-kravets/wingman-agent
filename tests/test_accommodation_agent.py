@@ -63,13 +63,18 @@ def test_one_llm_call_produces_exactly_one_step(monkeypatch):
     assert steps[0]["module"] == "AccommodationAgent"
 
 
-def test_degraded_mode_labels_its_output(monkeypatch):
+def test_no_candidates_refuses_without_calling_the_model(monkeypatch):
+    called = []
     monkeypatch.setattr(hotels, "search", lambda *a, **k: [])
-    monkeypatch.setattr(llm, "call", fake_call(good_payload()))
+    monkeypatch.setattr(llm, "call", lambda *a, **k: called.append(1))
 
-    _, steps = accommodation_agent.run(REQUEST, WINDOW, [])
+    with pytest.raises(llm.LLMError) as caught:
+        accommodation_agent.run(REQUEST, WINDOW, [])
 
-    assert "Illustrative" in steps[0]["prompt"]["user_prompt"]
+    # A named hotel that does not exist sends a tired passenger to the wrong place.
+    assert not called
+    assert caught.value.steps == []
+    assert "Nothing was invented" in str(caught.value)
 
 
 def test_options_on_the_wrong_dates_are_dropped(monkeypatch):

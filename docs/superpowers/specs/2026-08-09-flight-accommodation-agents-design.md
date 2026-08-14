@@ -28,7 +28,8 @@ contract, the date sync, and the four module names on the architecture PNG.
 |---|---|---|
 | D1 | Flights from **AeroDataBox** (RapidAPI free plan); hotels from **OpenStreetMap Overpass** | Amadeus Self-Service — the obvious choice — was decommissioned 17/7/2026 and its keys disabled; Kiwi Tequila went invite-only. AeroDataBox has the largest free quota still open to self-signup; Overpass is keyless, so the hotel half can never be blocked by a quota or an expired key. |
 | D2 | No free source of **prices or seat availability** exists in 2026 | Consequence, not a choice. `price_estimate` and `fare_conditions` are LLM-reasoned and must read as estimates. `/api/agent_info`'s description must say schedules and hotels are real while prices are estimated (`PROJECT_PLAN.md` Phase 3 already flags this). |
-| D3 | Data-source failure **degrades to LLM-only, clearly labelled** | The demo must survive an exhausted quota during grading. Mirrors the posture `lib/conversation.py` already takes on Supabase. The label goes in each option's existing `notes`, so no schema moves. |
+| ~~D3~~ | ~~Data-source failure **degrades to LLM-only, clearly labelled**~~ — **REVERSED 10/8/2026, see D3a** | Original rationale: the demo must survive an exhausted quota during grading, mirroring `lib/conversation.py`'s posture on Supabase. |
+| D3a | Data-source failure **refuses and says so**: no candidates ⇒ no LLM call, no options, and the passenger is told plainly | Live validation found the model refuses to invent here anyway — the system prompt's "choose only from that list" outranks a user-prompt instruction to improvise — so D3 never actually worked. It should not be forced: a fabricated flight number for a real airline is *actionable*, and a stressed passenger can go and ask for it at the desk. That is precisely the hallucination this project positions itself against, and a "illustrative" label does not survive a panicked reader. Refusing also costs one LLM call less per degraded turn. Evidence: `docs/search-agents-capabilities.md`. |
 | D4 | A tool fetch produces **no `steps[]` entry** | The spec ties `steps[]` to LLM calls, and a step requires `prompt.system_prompt`/`user_prompt` — an HTTP GET has neither. The fetched data appears verbatim inside the agent's LLM `user_prompt`, so the trace still shows exactly what drove the answer. One step per agent, matching the diagram. |
 | D5 | FlightAgent **defers baggage/fare/entitlement questions to DocumentationAgent** | AeroDataBox serves schedules, not carriage terms. Those live in the Contract of Carriage — Person C's corpus — and come back clause-cited, which is the project's differentiator. Forces a correction to `PROJECT_PLAN.md` and `CLAUDE.md` (§9). |
 | D6 | Quota guarded by a **process-local cache + `WINGMAN_LIVE_DATA` kill-switch**; separately ask Person A to narrow `needs` on follow-up turns | 600 units/month at 2 units per call is ~300 calls, shared across three developers plus grading. The cache is contained in Person B's files and needs nobody's schedule; the `needs` narrowing is the deeper fix and is raised as an integration item, not a blocker. |
@@ -57,7 +58,10 @@ Measured against the live endpoints on 9/8/2026, not assumed. These drive §4–
 - Useful fields per departure: `number`, `airline.{name,iata}`, `arrival.airport.iata`,
   `departure.scheduledTime.local`, `arrival.scheduledTime.local`, `status`,
   `aircraft.model`, `departure.terminal`.
-- `/subscriptions/balance` reports remaining units and **costs 0 units**.
+- `/subscriptions/balance` reports remaining units. **Correction (10/8/2026): it appears to
+  consume ~2 units itself** — the counter dropped 592→590 across a session whose only other
+  calls were to keyless Overpass. Measure consumption by differencing around a run rather
+  than polling the endpoint casually.
 
 **Overpass** — `POST https://overpass-api.de/api/interpreter`, keyless, `User-Agent` required:
 
@@ -119,7 +123,7 @@ fetch candidates via tool   (D4: no step)
 4. Filters to `arrival.airport.iata == destination`, projects to the fields in §4, and
    normalises both timestamps to ISO 8601 with `T`.
 5. On HTTP 429, retries once after a short pause; on any other failure returns `[]`
-   rather than raising, so the agent degrades (D3) instead of losing the turn.
+   rather than raising. The agent then refuses and says so (D3a) rather than inventing.
 
 **`hotels.search`**
 
@@ -141,7 +145,6 @@ changes. Both prompts additionally state:
 - Never return an option that is not in the candidate list.
 - Never state baggage, fare or entitlement rules; defer to the entitlements section (D5).
 - `price_estimate` / `fare_conditions` must read as estimates, never as quoted prices (D2).
-- When no candidates were supplied, say so in `notes` — the options are illustrative (D3).
 - FlightAgent: direct flights only; if none suits, say so rather than inventing a connection (D7).
 - AccommodationAgent: state in `notes` when meals were not confirmed (D8).
 
@@ -163,7 +166,7 @@ Two states, never a silent third:
 | State | Trigger | Behaviour |
 |---|---|---|
 | **live** | candidates fetched | Options are real, verified flights/hotels |
-| **degraded** | fetch failed, quota gone, or `WINGMAN_LIVE_DATA=0` | No candidates block; prompt instructs the model to reason unaided and label the result illustrative in `notes` |
+| **refused** | fetch failed, quota gone, or `WINGMAN_LIVE_DATA=0` | **No LLM call at all.** The agent raises with a plain-language reason and the passenger is told nothing could be verified and where to look instead (D3a) |
 
 **Known consequence:** once `IS_STUB` is dropped, having no `LLMOD_API_KEY` stops producing
 a plausible fake plan and starts producing *"Could not complete: onward flights"* through the
@@ -183,7 +186,8 @@ Everything runs with **no keys of any kind**.
   window widening, cache hits, the kill-switch, `name:en` preference, distance sorting.
 - **Agent tests** — monkeypatch `lib.llm.call`. Cover: candidates reach `user_prompt`,
   validation drops malformed options, an all-malformed response raises with its step intact,
-  degraded mode labels its output, and the step's `module` matches the diagram.
+  a run with no candidates refuses without calling the model, and the step's `module`
+  matches the diagram.
 - **Shared edit** — `tests/test_supervisor.py` asserts against stub payloads and will fail
   once `run()` needs a key. Fixed by an autouse fixture that fakes `lib.llm.call`, which
   Person C will need for the RAG agent too. It is Person A's file: flagged in the PR
@@ -236,6 +240,6 @@ No new dependencies: `httpx` is already in `requirements.txt`.
   baggage follow-up gets a deferral rather than an answer. Deliberate — a deferral is
   correct where an invented allowance is not.
 - **OSM coverage varies by city.** Twenty hotels near TLV is comfortable; a smaller airport
-  may return few or none, which lands in the degraded path.
+  may return few or none, which lands in the refusal path (D3a).
 - **AeroDataBox response shape is now verified, but only for one route.** Other airports may
   carry sparser fields; the projection in §4 must tolerate missing keys.

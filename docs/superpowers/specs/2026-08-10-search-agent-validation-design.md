@@ -60,7 +60,7 @@ Artifacts land in `live-test-output/`, already gitignored.
 | 4 | `overnight-one-night` | Date sync: 22:15 disruption → next-morning flight → exactly 1 night |
 | 5 | `multi-night` | Date sync when the next usable flight is 2+ days out |
 | 6 | `same-day-no-hotel` | Replacement departs today ⇒ `AccommodationAgent` must **not** be dispatched |
-| 7 | `degraded-flights` | `WINGMAN_LIVE_DATA=0`: options must be labelled illustrative |
+| 7 | `degraded-flights` | `WINGMAN_LIVE_DATA=0`: the agent must refuse rather than invent (D3a) |
 | 8 | `sparse-osm-airport` | An airport OSM barely covers; the hotel degraded path |
 | 9 | `baggage-followup` | Multi-turn ski-bag question — must defer, not invent an allowance |
 | 10 | `price-question` | "What will it cost?" — must not state a fare as fact |
@@ -98,8 +98,8 @@ so grounding is verifiable after the fact without re-calling anything.
   around); a bare figure fails.
 - **Meals honesty** — `meals_included: true` only when the candidate carried a breakfast tag;
   otherwise `notes` must say meals were not confirmed.
-- **Degraded labelling** — when the candidate list was empty, every option's `notes` must say
-  the option is illustrative.
+- **Degraded refusal** — with no candidate list the agent must make no LLM call, return no
+  options, and the passenger must be told why (D3a, reversed from D3 after this run).
 - **Deferral** — the baggage scenario must not assert an allowance and must point at the
   entitlements/Contract of Carriage.
 
