@@ -37,6 +37,14 @@ your source. "price_estimate" must read as an estimate. Set "meals_included" to 
 data explicitly says so; otherwise set it false and say in "notes" that meals were not confirmed
 and to check at the desk. Never assert a fact about a real named business that you were not given.
 
+A candidate may carry extra detail — "phone", "website", "address", "stars", "wheelchair",
+"internet", "brand", or "kind" when it is not a hotel (hostel, guest house, apartment). Use only
+what is there, never fill a gap. **If a phone number is given, put it in "notes" and tell the
+passenger to call and confirm the room and the rate** — that is the one way to settle the two
+things you cannot: whether there is a bed free tonight and what it actually costs. Mention step-free
+access when the data says so, and say plainly when somewhere is a hostel or apartment rather than a
+hotel, because that changes what the passenger should expect.
+
 Return a JSON object only, no prose:
 {"options": [{"id", "name", "area", "check_in", "check_out", "nights",
               "price_estimate", "meals_included", "notes"}],
@@ -44,11 +52,11 @@ Return a JSON object only, no prose:
 
 Example
 -------
-Hotels: [{"name": "Airport Plaza", "distance_km": 2.4, "stars": "4", "breakfast": null, "area": "Lod"},
-         {"name": "City Central Inn", "distance_km": 11.2, "stars": null, "breakfast": null, "area": "Tel Aviv"}]
+Hotels: [{"name": "Airport Plaza", "distance_km": 2.4, "area": "Lod", "stars": "4", "phone": "+972 3 000 0000", "address": "12 HaNasi", "wheelchair": "yes"},
+         {"name": "City Central Inn", "distance_km": 11.2, "area": "Tel Aviv", "kind": "hostel"}]
 Request: 2 guests stranded at TLV, check in 2026-08-09, check out 2026-08-10, 1 night, onward flight departs 2026-08-10T09:40.
 Response:
-{"options": [{"id": "H1", "name": "Airport Plaza", "area": "2.4 km from the terminal, Lod", "check_in": "2026-08-09", "check_out": "2026-08-10", "nights": 1, "price_estimate": "Roughly EUR 110-140 for the night (estimate - not a quoted price)", "meals_included": false, "notes": "Closest to the terminal, which matters for an 09:40 departure. Meals were not confirmed - ask at the desk, and keep the receipt if you are claiming care costs back."}, {"id": "H2", "name": "City Central Inn", "area": "11.2 km from the terminal, Tel Aviv", "check_in": "2026-08-09", "check_out": "2026-08-10", "nights": 1, "price_estimate": "Roughly EUR 80-100 for the night (estimate - not a quoted price)", "meals_included": false, "notes": "Cheaper but 11 km out, so leave a clear hour to get back for the flight. Meals not confirmed."}],
+{"options": [{"id": "H1", "name": "Airport Plaza", "area": "2.4 km from the terminal - 12 HaNasi, Lod", "check_in": "2026-08-09", "check_out": "2026-08-10", "nights": 1, "price_estimate": "Roughly EUR 110-140 for the night (estimate - not a quoted price)", "meals_included": false, "notes": "Closest to the terminal, which matters for an 09:40 departure. Call +972 3 000 0000 to confirm a room and the rate - I cannot check either. Meals were not confirmed, so ask at the desk and keep the receipt if you are claiming care costs back. Step-free access."}, {"id": "H2", "name": "City Central Inn", "area": "11.2 km from the terminal, Tel Aviv", "check_in": "2026-08-09", "check_out": "2026-08-10", "nights": 1, "price_estimate": "Roughly EUR 40-70 for the night (estimate - not a quoted price)", "meals_included": false, "notes": "A hostel rather than a hotel, so expect shared facilities. Cheaper, but 11 km out - leave a clear hour to get back for the flight. No phone number listed, so turning up is a gamble at this hour."}],
  "recommended_id": "H1"}
 """
 

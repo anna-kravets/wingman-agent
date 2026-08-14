@@ -33,8 +33,10 @@ contract, the date sync, and the four module names on the architecture PNG.
 | D4 | A tool fetch produces **no `steps[]` entry** | The spec ties `steps[]` to LLM calls, and a step requires `prompt.system_prompt`/`user_prompt` — an HTTP GET has neither. The fetched data appears verbatim inside the agent's LLM `user_prompt`, so the trace still shows exactly what drove the answer. One step per agent, matching the diagram. |
 | D5 | FlightAgent **defers baggage/fare/entitlement questions to DocumentationAgent** | AeroDataBox serves schedules, not carriage terms. Those live in the Contract of Carriage — Person C's corpus — and come back clause-cited, which is the project's differentiator. Forces a correction to `PROJECT_PLAN.md` and `CLAUDE.md` (§9). |
 | D6 | Quota guarded by a **process-local cache + `WINGMAN_LIVE_DATA` kill-switch**; separately ask Person A to narrow `needs` on follow-up turns | 600 units/month at 2 units per call is ~300 calls, shared across three developers plus grading. The cache is contained in Person B's files and needs nobody's schedule; the `needs` narrowing is the deeper fix and is raised as an integration item, not a blocker. |
-| D7 | **Direct flights only**, widening the time window when results are thin | The endpoint returns departures, not itineraries: it cannot build TLV→VIE→FRA, and verifying a second leg costs another 2 units. Every option returned is a real, verified flight. Stated as a limitation in the prompt and in `agent_info`. |
+| D7 | **Direct flights only**, widening the time window when results are thin | The endpoint returns departures, not itineraries. **Clarification (14/8/2026): connections are not impossible, they are declined.** We could compose one — for each departure to hub H arriving at T, a second FIDS call on H from T+MCT — at ~2 units per hub probed, so roughly 3× the cost per search. Two problems stop it: we would have to invent a minimum-connection-time rule, and, more seriously, two flights that line up on a schedule board form a *self-connection* with **no protection** — miss the second leg and nobody owes the passenger anything. Recommending that to someone already disrupted is worse advice than "no direct flight". Schedule data cannot tell us whether a routing is sellable as one through-ticket. If ever built, every such option must be labelled an unverified self-connection. |
 | D9 | **Non-bookable flights are filtered in the tool**, not left to the model: a deny-list of statuses (`Departed`, `Canceled`, `Arrived`, `EnRoute`, `Approaching`, `Diverted`, `GateClosed`, …) drops candidates before the prompt is built | Live validation on 14/8/2026 caught the model recommending a flight already marked `Departed`. It flagged that status in one run and silently ignored it in the next, from identical data — so it is a good reasoner and an unreliable filter. Whether an option is catchable at all determines whether it is an option, so it belongs in code. Deny-list rather than allow-list, so an unfamiliar status AeroDataBox adds later still reaches the passenger instead of emptying the list and triggering a false refusal. |
+| D10 | Flight search widens to **48 hours (4 windows, 8 units max)**, up from 24 | 12 hours is a hard server cap — a 24-hour request returns `HTTP 400: "must not be more than 12 hours in duration"` (verified 14/8/2026), so a longer reach means more calls, not a longer call. The cost lands only where it helps: a busy route still stops after one window at `MIN_OPTIONS` and pays 2 units. Thin routes — the ones that previously found nothing and refused — are the only ones that spend more. TLV→NCE went from a refusal to a real flight. |
+| D11 | Accommodation search **widens its radius (12 → 25 → 40 km)**, covers **hostels, guest houses, motels, apartments and resorts**, and passes through **contact detail** | Ramon/Eilat was written up as an OSM coverage gap after returning zero hotels at 12 km. It is 19 km from Eilat, which has 141 places to stay: the limitation was our radius, not the data. Overpass is keyless and unmetered, so widening costs only latency. Broadening the accommodation types also found a hostel 1.9 km from TLV — nearer than any hotel we had been offering. Contact detail was already in every response and being discarded; **a phone number is the single most valuable field here**, because it hands the passenger the one job this agent cannot do: confirming a free room and a real rate. |
 | D8 | `meals_included` stays **boolean**; uncertainty goes in `notes` | OSM almost never knows (1 of 20 TLV hotels carried any classification tag). Widening the field to `null` would change a locked schema and Person A's `_compose`. Set it from an OSM tag when present, else `false`, and say in `notes` that meals were not confirmed. |
 
 ---
@@ -51,7 +53,9 @@ Measured against the live endpoints on 9/8/2026, not assumed. These drive §4–
   (§5), so **150–300 searches per month**.
 - A per-second rate limit exists on the BASIC plan and is easy to trip with back-to-back
   calls; it returns HTTP 429. Requests must be spaced/retried.
-- The time range is capped at **12 hours** per call.
+- The time range is capped at **12 hours** per call — a hard server-side limit, confirmed
+  14/8/2026: a 24-hour request returns `HTTP 400 "must not be more than 12 hours in duration"`.
+  Reaching further therefore costs more calls, not a bigger one.
 - Future dates work. A TLV window for the next day returned **188 departures / 118 KB**,
   of which **3 were TLV→FRA**. Filtering and trimming in the tool takes that to **630 bytes**
   — a ~188× reduction, and the single most budget-relevant step in this work.
@@ -67,8 +71,13 @@ Measured against the live endpoints on 9/8/2026, not assumed. These drive §4–
 **Overpass** — `POST https://overpass-api.de/api/interpreter`, keyless, `User-Agent` required:
 
 - A 12 km radius around TLV returned **20 named hotels / 6.9 KB**; 8 trimmed rows are 905 bytes.
-- Metadata is sparse: **1 of 20** had a `stars` tag, nearly none had a website or address.
-  OSM reliably supplies name, coordinates and therefore exact distance — and little else.
+- Metadata is sparse but not empty. Of 20 near TLV: 1 `stars`, but **8 street addresses,
+  ~5 phone numbers and ~5 websites**. A phone number is the most useful field available,
+  because it lets the passenger settle price and availability themselves.
+- Coverage is a function of **radius**, not of OSM. Ramon/Eilat has nothing within 12 km and
+  **141 places to stay within 40 km**.
+- Overpass throttles on slot contention and recovers in seconds; a single unretried blip cost a
+  live run its entire hotel leg. Retry each mirror twice.
 - Names are frequently in the local language; prefer the `name:en` tag, fall back to `name`.
 
 ---

@@ -44,6 +44,9 @@ The evaluator needs no keys and no database — it reads the saved artifact. Sce
 | **Conversation history reaches both agents** on follow-up turns. | `history_reached_agents` passed on `baggage-followup`, `price-question`, `earlier-flight-followup`, `compare-options` |
 | **The trace is well-formed.** One step per agent, only the four locked module names, exact key shapes. | `trace_shape` passed on all 12 |
 | **No live data ⇒ refusal, not invention**, with a plain reason and no LLM call at all. | `degraded_refusal` passed on `degraded-flights`, `thin-route`, `sparse-osm-airport` |
+| **Thin routes are reached, not refused.** The search now covers 48 hours in 12-hour windows. TLV→NCE went from finding nothing at all to a real flight. | `thin-route`, re-run live after D10 |
+| **Accommodation is found even at remote airports.** The radius widens 12→25→40 km, and hostels, guest houses, motels, apartments and resorts count. Ramon/Eilat went from **0 results to 8**. | Live check after D11 |
+| **Contact detail reaches the passenger** — phone, website, street address, step-free access, and whether somewhere is a hostel rather than a hotel. | `overnight-one-night`, re-run live after D11 |
 | **Flights the passenger cannot catch are never offered** — departed, cancelled, diverted and gate-closed candidates are dropped in the tool. | `no_unusable_status` passed on `same-day-no-hotel` after the D9 fix; guarded by 11 unit tests in `tests/test_tools_flights.py` |
 
 ---
@@ -106,9 +109,12 @@ A degraded turn dropped from one LLM call to **zero**. Logged as D3a in the desi
 - **No confirmation that a hotel has a room free tonight.** Wingman proposes; it never books.
 
 ### The shape of the AeroDataBox API
-- **Direct flights only.** The endpoint returns departures, not itineraries — it cannot build
-  TLV→VIE→FRA, and verifying a second leg would cost another 2 units.
-- **12-hour windows**, and a search is capped at two of them, so it sees at most 24 hours ahead.
+- **Direct flights only — by choice, not by impossibility.** We could compose a connection from two
+  FIDS calls at ~3× the cost. We do not, because two flights that line up on a schedule board are a
+  *self-connection* with **no protection**: miss the second leg and nobody owes you anything. For
+  someone already disrupted that is worse advice than "no direct flight".
+- **12-hour windows** — a hard server cap, confirmed by a `400` on a 24-hour request. A search is
+  capped at four of them, so it sees **48 hours** ahead for at most 8 units.
 - A route with **no service in that window returns nothing at all**, which lands in the refusal
   path — correct, but it means "no flights found" and "route not served" are indistinguishable
   to the passenger. `thin-route` (TLV→NCE) behaved this way on the day.
@@ -117,8 +123,9 @@ A degraded turn dropped from one LLM call to **zero**. Logged as D3a in the desi
 - Reliable: **name, position, and therefore exact distance to the terminal**.
 - Unreliable or absent: star ratings (1 of 20 near TLV), websites, addresses, meals.
 - Names are often local-language; the tool prefers `name:en` and falls back.
-- **Coverage varies sharply by airport.** TLV returns 20 hotels within 12 km; **Ramon/Eilat
-  (ETM) returns zero**, which triggers refusal (`sparse-osm-airport`).
+- ~~**Coverage varies sharply by airport.** Ramon/Eilat returns zero.~~ **Corrected 14/8/2026:**
+  that was our 12 km radius, not an OSM gap. Ramon is 19 km from Eilat and has **141 places to
+  stay within 40 km**. The radius now widens automatically, and Ramon returns 8.
 - Airports absent from the table are unknown: `VDA` (closed) is not in the 3,267-airport
   OurAirports extract, so it cannot be geolocated at all.
 
@@ -146,10 +153,10 @@ Recorded honestly rather than papered over — real schedules change daily.
 
 | Scenario | Intended | What happened on 14/8 |
 |---|---|---|
-| `thin-route` | A route with 1–2 departures, exercising window widening | TLV→NCE returned **zero** matching departures, so it exercised refusal instead. Widening is covered by `tests/test_tools_flights.py::test_a_thin_route_widens_the_window_once` against a captured fixture. |
+| `thin-route` | A route with 1–2 departures, exercising window widening | At 24 hours TLV→NCE returned **zero** and refused. **This is what prompted D10**: at 48 hours it finds a real flight, verified live. |
 | `multi-night` | A 2+ night strand | Same route, same outcome: no flight, so no stay window. Multi-night logic is covered deterministically by `tests/test_supervisor.py::test_stay_window_spans_multiple_nights`. |
 | `lhr-jfk-cancelled` | Long-haul with an overnight stay | The next departure left the same day, so no hotel was needed — the flight half validated fully, the hotel half skipped. |
-| `sparse-osm-airport` | An airport with *few* hotels | ETM has **none** in OSM, so it tested the refusal path rather than a thin list. |
+| `sparse-osm-airport` | An airport with *few* hotels | ETM had none within 12 km — **which turned out to be our bug, not OSM's gap** (D11). It now returns 8. The scenario still refuses, but for an unrelated reason: ETM→TLV has no flights, so the crew stops at the flight leg before reaching hotels. |
 
 ---
 
@@ -170,10 +177,13 @@ Recorded honestly rather than papered over — real schedules change daily.
 1. **Cache empty results.** A route with no service currently costs 4 units *every* time it is
    asked about. On the tightest constraint in the project, that is the cheapest fix available.
 2. **Widen the cache key from the hour to the day**, or the same route an hour apart pays twice.
-3. **Outputs lean hard on the one-shot example.** `fare_conditions` came back near-verbatim from
+3. **Foursquare Places** (reportedly 100k free calls/month) would add user ratings and a price
+   *band* on top of what OSM gives. It needs someone to create an account, and it still would not
+   give a bookable rate — so it buys a nicer hotel card, not a better answer. Deferred.
+4. **Outputs lean hard on the one-shot example.** `fare_conditions` came back near-verbatim from
    the prompt's example wording across several scenarios. Correct and consistent, but templated;
    worth deciding whether that reads as reassuring or robotic.
-4. **"No flights found" and "route not served" are indistinguishable.** If it matters for the
+5. **"No flights found" and "route not served" are indistinguishable.** If it matters for the
    demo, the refusal message could say which.
 
 ---

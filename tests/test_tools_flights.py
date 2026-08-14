@@ -106,15 +106,36 @@ def test_a_route_with_3_options_does_not_spend_a_second_call(monkeypatch):
     assert len(calls) == 1
 
 
-def test_a_thin_route_widens_the_window_once(monkeypatch):
+def test_a_thin_route_widens_the_window_until_it_has_enough(monkeypatch):
     calls = []
     monkeypatch.setattr(httpx, "get", respond_with(FIXTURE, calls=calls))
 
-    # NCE has exactly 1 flight in this window — too thin, so it widens once.
+    # NCE has 1 flight per replayed window, so it takes three 12h windows to
+    # reach MIN_OPTIONS. Widening to 48h is what rescues routes like this: at
+    # 24h the live route found nothing at all and the agent refused.
     results = flights.search("TLV", "NCE", AFTER)
 
-    assert len(calls) == 2   # never more: 2 calls == 4 of 600 monthly units
-    assert len(results) == 2  # one from each window (the fixture replays)
+    assert len(calls) == 3
+    assert len(results) == flights.MIN_OPTIONS
+
+
+def test_the_window_never_widens_past_the_ceiling(monkeypatch):
+    calls = []
+    monkeypatch.setattr(httpx, "get", respond_with({"departures": []}, calls=calls))
+
+    assert flights.search("TLV", "ZZZ", AFTER) == []
+    # 4 windows == 48 hours == 8 of 600 monthly units, and never more.
+    assert len(calls) == flights.MAX_WINDOWS == 4
+
+
+def test_a_busy_route_still_costs_one_call(monkeypatch):
+    calls = []
+    monkeypatch.setattr(httpx, "get", respond_with(FIXTURE, calls=calls))
+
+    # The 48h ceiling must not make common routes more expensive.
+    flights.search("TLV", "FRA", AFTER)
+
+    assert len(calls) == 1
 
 
 def test_rate_limit_is_retried_once(monkeypatch):

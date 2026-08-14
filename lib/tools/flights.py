@@ -17,9 +17,15 @@ import httpx
 
 from lib.tools import live_data_enabled
 
-WINDOW_HOURS = 12          # AeroDataBox caps a departures range at 12 hours
+WINDOW_HOURS = 12          # AeroDataBox caps a departures range at 12 hours,
+                           # verified 14/8/2026: a 24h request returns HTTP 400
 MIN_OPTIONS = 3            # below this it is worth one more call
-MAX_WINDOWS = 2            # hard ceiling: 2 calls == 4 units per search
+MAX_WINDOWS = 4            # hard ceiling: 4 calls == 8 units, covering 48 hours.
+                           # The cost lands only where it is needed: a busy route
+                           # stops at the first window once it has MIN_OPTIONS, so
+                           # it still pays 2 units. Thin routes - the ones that
+                           # previously found nothing at all and refused - are the
+                           # only ones that spend more.
 TIMEOUT_SECONDS = 60
 RETRY_PAUSE_SECONDS = 2.0  # the BASIC plan rate-limits per second
 
