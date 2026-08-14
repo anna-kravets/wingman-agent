@@ -126,9 +126,12 @@ from:
   query Supabase itself — that shape was considered and rejected (rationale in the decisions log,
   `docs/PROJECT_PLAN.md` §6). Persistence is best-effort: with no Supabase env vars it no-ops and
   every call behaves as a single turn. The GUI generates the `conversation_id` itself and sends it
-  on every call (the locked response shape has no field to return a server-generated one) and
-  renders the running history. This shapes the Supervisor's interface — build it from Phase 1,
-  don't retrofit.
+  on every call (the locked response shape has no field to return a server-generated one). A
+  one-year HTTP-only anonymous-device cookie scopes every stored conversation to the browser that
+  created it; `GET /api/conversations` restores that device's list, and the owner-scoped `DELETE`
+  route removes a conversation after UI confirmation. This is device continuity, not login or
+  cross-device identity. This shapes the Supervisor's interface — build it from Phase 1, don't
+  retrofit.
 - Which airlines' CoC documents to actually collect for the RAG corpus (only AA was sourced during
   Assignment 2) — still open.
 - **Resolved (9/8/2026):** flights/hotels data source — flights from AeroDataBox, hotels from

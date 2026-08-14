@@ -102,8 +102,18 @@ def test_agent_failure_is_reported_in_the_error_shape(monkeypatch):
 
 def test_prior_turns_reach_the_supervisor(monkeypatch):
     store = {"c1": [{"prompt": "earlier question", "response": "earlier answer"}]}
-    monkeypatch.setattr(conversation, "load_history", lambda cid: list(store.get(cid, [])))
-    monkeypatch.setattr(conversation, "save_history", lambda cid, hist: store.update({cid: hist}))
+    owners = []
+
+    def fake_load(owner_id, conversation_id):
+        owners.append(owner_id)
+        return list(store.get(conversation_id, []))
+
+    def fake_save(owner_id, conversation_id, history, title):
+        owners.append(owner_id)
+        store[conversation_id] = history
+
+    monkeypatch.setattr(conversation, "load_history", fake_load)
+    monkeypatch.setattr(conversation, "save_history", fake_save)
 
     seen = {}
     monkeypatch.setattr(
@@ -115,16 +125,83 @@ def test_prior_turns_reach_the_supervisor(monkeypatch):
     assert seen["history"] == [{"prompt": "earlier question", "response": "earlier answer"}]
     assert len(store["c1"]) == 2               # the new turn was persisted
     assert store["c1"][-1]["prompt"] == "follow up"
+    assert len(set(owners)) == 1                # one cookie owner scopes both operations
 
 
-def test_works_as_a_single_turn_when_supabase_is_not_configured():
+def test_works_as_a_single_turn_when_supabase_is_not_configured(monkeypatch):
     # No env vars in CI or on a fresh clone: the GUI still sends a conversation_id,
     # and the agent must answer rather than error.
+    monkeypatch.delenv("SUPABASE_URL", raising=False)
+    monkeypatch.delenv("SUPABASE_KEY", raising=False)
+    monkeypatch.delenv("SUPABASE_SERVICE_ROLE_KEY", raising=False)
     body = client.post(
         "/api/execute", json={"prompt": COMPLETE, "conversation_id": "unconfigured"}
     ).json()
 
     assert body["status"] == "ok"
+
+
+def test_history_failure_does_not_block_an_agent_response(monkeypatch):
+    monkeypatch.setattr(
+        conversation, "load_history", lambda *args: (_ for _ in ()).throw(RuntimeError("db down"))
+    )
+    monkeypatch.setattr(conversation, "save_history", lambda *args: None)
+
+    body = client.post(
+        "/api/execute", json={"prompt": COMPLETE, "conversation_id": "resilient"}
+    ).json()
+
+    assert body["status"] == "ok"
+
+
+def test_history_save_failure_does_not_discard_an_agent_response(monkeypatch):
+    monkeypatch.setattr(conversation, "load_history", lambda *args: [])
+    monkeypatch.setattr(
+        conversation, "save_history", lambda *args: (_ for _ in ()).throw(RuntimeError("db down"))
+    )
+
+    body = client.post(
+        "/api/execute", json={"prompt": COMPLETE, "conversation_id": "resilient"}
+    ).json()
+
+    assert body["status"] == "ok"
+
+
+def test_anonymous_cookie_scopes_conversation_listing(monkeypatch):
+    seen_owners = []
+    monkeypatch.setattr(
+        conversation,
+        "list_conversations",
+        lambda owner_id: seen_owners.append(owner_id) or [],
+    )
+    anonymous_client = TestClient(app)
+
+    first = anonymous_client.get("/api/conversations")
+    second = anonymous_client.get("/api/conversations")
+
+    assert first.json() == {"status": "ok", "conversations": []}
+    assert "wingman_device_id=" in first.headers["set-cookie"]
+    assert "HttpOnly" in first.headers["set-cookie"]
+    assert "SameSite=lax" in first.headers["set-cookie"]
+    assert len(seen_owners) == 2 and seen_owners[0] == seen_owners[1]
+    assert anonymous_client.cookies.get("wingman_device_id") != seen_owners[0]
+    assert len(seen_owners[0]) == 64  # Supabase stores a hash, not the bearer cookie.
+
+
+def test_delete_is_owner_scoped(monkeypatch):
+    deleted = []
+    monkeypatch.setattr(
+        conversation,
+        "delete_conversation",
+        lambda owner_id, conversation_id: deleted.append((owner_id, conversation_id)),
+    )
+    anonymous_client = TestClient(app)
+
+    response = anonymous_client.delete("/api/conversations/c1")
+
+    assert response.json() == {"status": "ok"}
+    assert len(deleted) == 1
+    assert deleted[0][1] == "c1"
 
 
 # --- the other three endpoints --------------------------------------------------
@@ -163,5 +240,16 @@ def test_gui_is_served_without_auth():
     response = client.get("/")
 
     assert response.status_code == 200
-    assert 'id="run"' in response.text        # the Run Agent button
+    assert 'id="run"' in response.text        # the send button
     assert "<textarea" in response.text
+    assert 'id="new-chat"' in response.text
+    assert 'id="conversation-list"' in response.text
+    assert 'id="delete-dialog"' in response.text
+    assert 'id="confirm-delete"' in response.text
+    assert 'method: "DELETE"' in response.text
+    assert "localStorage" in response.text
+    assert "No account required" not in response.text
+    assert 'type="password"' not in response.text
+    assert 'href="/login"' not in response.text
+    assert "UI preview" not in response.text
+    assert "demo-conversation" not in response.text
