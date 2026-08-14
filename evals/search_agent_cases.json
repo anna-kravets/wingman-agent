@@ -1,0 +1,157 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "case_id": "tlv-fra-cancelled",
+      "title": "Demo route, cancelled at the gate",
+      "probes": ["grounding", "cross_airline", "date_sync", "honesty"],
+      "prompt": "LH318 TLV -> FRA was cancelled at the gate",
+      "history": [],
+      "request_override": {"party_size": 2},
+      "local_now": {"offset_days": 0, "time": "22:15"},
+      "live_data": true,
+      "checks": ["trace_shape", "grounding_flights", "grounding_hotels", "date_sync", "no_booking_site", "price_honesty", "meals_honesty"],
+      "expect": {"accommodation_dispatched": true}
+    },
+    {
+      "case_id": "lhr-jfk-cancelled",
+      "title": "Long-haul, different region",
+      "probes": ["grounding", "coverage_outside_tlv"],
+      "prompt": "BA117 LHR -> JFK was cancelled",
+      "history": [],
+      "request_override": {"party_size": 1},
+      "local_now": {"offset_days": 0, "time": "21:00"},
+      "live_data": true,
+      "checks": ["trace_shape", "grounding_flights", "grounding_hotels", "date_sync", "no_booking_site", "price_honesty", "meals_honesty"],
+      "expect": {"accommodation_dispatched": true}
+    },
+    {
+      "case_id": "thin-route",
+      "title": "Route with few departures",
+      "probes": ["window_widening", "thin_candidates"],
+      "prompt": "LY315 TLV -> NCE was cancelled",
+      "history": [],
+      "request_override": {"party_size": 1},
+      "local_now": {"offset_days": 0, "time": "22:00"},
+      "live_data": true,
+      "checks": ["trace_shape", "grounding_flights", "no_booking_site", "price_honesty"],
+      "expect": {}
+    },
+    {
+      "case_id": "overnight-one-night",
+      "title": "Late-evening disruption, morning flight",
+      "probes": ["date_sync"],
+      "prompt": "LH318 TLV -> FRA was cancelled at the gate",
+      "history": [],
+      "request_override": {"party_size": 2},
+      "local_now": {"offset_days": 0, "time": "23:30"},
+      "live_data": true,
+      "checks": ["trace_shape", "date_sync", "grounding_hotels", "meals_honesty"],
+      "expect": {"accommodation_dispatched": true}
+    },
+    {
+      "case_id": "multi-night",
+      "title": "Infrequent route, possible multi-night strand",
+      "probes": ["date_sync_multi_night"],
+      "prompt": "LY315 TLV -> NCE was cancelled",
+      "history": [],
+      "request_override": {"party_size": 2},
+      "local_now": {"offset_days": 0, "time": "23:45"},
+      "live_data": true,
+      "checks": ["trace_shape", "date_sync"],
+      "expect": {}
+    },
+    {
+      "case_id": "same-day-no-hotel",
+      "title": "Replacement leaves the same day",
+      "probes": ["date_sync_skip"],
+      "prompt": "LH318 TLV -> FRA was cancelled at the gate",
+      "history": [],
+      "request_override": {"party_size": 1},
+      "local_now": {"offset_days": 0, "time": "05:00"},
+      "live_data": true,
+      "checks": ["trace_shape", "grounding_flights", "no_accommodation"],
+      "expect": {"accommodation_dispatched": false}
+    },
+    {
+      "case_id": "degraded-flights",
+      "title": "Live data switched off",
+      "probes": ["degraded_labelling"],
+      "prompt": "LH318 TLV -> FRA was cancelled at the gate",
+      "history": [],
+      "request_override": {"party_size": 1},
+      "local_now": {"offset_days": 0, "time": "22:15"},
+      "live_data": false,
+      "checks": ["trace_shape", "degraded_labelling", "no_booking_site"],
+      "expect": {}
+    },
+    {
+      "case_id": "sparse-osm-airport",
+      "title": "Airport OpenStreetMap barely covers",
+      "probes": ["hotel_coverage_limits"],
+      "prompt": "LY123 VDA -> TLV was cancelled",
+      "history": [],
+      "request_override": {"party_size": 1, "stranded_at": "VDA"},
+      "local_now": {"offset_days": 0, "time": "22:15"},
+      "live_data": true,
+      "checks": ["trace_shape"],
+      "expect": {}
+    },
+    {
+      "case_id": "baggage-followup",
+      "title": "Ski bag question on a follow-up turn",
+      "probes": ["deferral", "scope_discipline"],
+      "prompt": "can I take my ski bag on the 09:40?",
+      "history": [
+        {"prompt": "LH318 TLV -> FRA was cancelled at the gate", "response": "Onward flight: LH 687, TLV to FRA."}
+      ],
+      "request_override": {"party_size": 2, "airline": "LH", "flight_number": "LH318", "origin": "TLV", "destination": "FRA", "stranded_at": "TLV", "disruption": "cancelled"},
+      "local_now": {"offset_days": 0, "time": "22:20"},
+      "live_data": true,
+      "checks": ["trace_shape", "deferral", "history_reached_agents"],
+      "expect": {}
+    },
+    {
+      "case_id": "price-question",
+      "title": "Passenger asks what it will cost",
+      "probes": ["price_honesty"],
+      "prompt": "how much will the new flight cost me?",
+      "history": [
+        {"prompt": "LH318 TLV -> FRA was cancelled at the gate", "response": "Onward flight: LH 687, TLV to FRA."}
+      ],
+      "request_override": {"party_size": 2, "airline": "LH", "flight_number": "LH318", "origin": "TLV", "destination": "FRA", "stranded_at": "TLV", "disruption": "cancelled"},
+      "local_now": {"offset_days": 0, "time": "22:25"},
+      "live_data": true,
+      "checks": ["trace_shape", "price_honesty", "no_asserted_fare", "history_reached_agents"],
+      "expect": {}
+    },
+    {
+      "case_id": "earlier-flight-followup",
+      "title": "Asks for something earlier",
+      "probes": ["multi_turn"],
+      "prompt": "is there anything earlier than that?",
+      "history": [
+        {"prompt": "LH318 TLV -> FRA was cancelled at the gate", "response": "Onward flight: LH 687, departs 16:30."}
+      ],
+      "request_override": {"party_size": 2, "airline": "LH", "flight_number": "LH318", "origin": "TLV", "destination": "FRA", "stranded_at": "TLV", "disruption": "cancelled"},
+      "local_now": {"offset_days": 0, "time": "22:30"},
+      "live_data": true,
+      "checks": ["trace_shape", "grounding_flights", "history_reached_agents"],
+      "expect": {}
+    },
+    {
+      "case_id": "compare-options",
+      "title": "Asks to compare two options",
+      "probes": ["multi_turn"],
+      "prompt": "compare the two options for me",
+      "history": [
+        {"prompt": "LH318 TLV -> FRA was cancelled at the gate", "response": "Onward flight: LH 687, departs 16:30."}
+      ],
+      "request_override": {"party_size": 2, "airline": "LH", "flight_number": "LH318", "origin": "TLV", "destination": "FRA", "stranded_at": "TLV", "disruption": "cancelled"},
+      "local_now": {"offset_days": 0, "time": "22:35"},
+      "live_data": true,
+      "checks": ["trace_shape", "grounding_flights", "history_reached_agents"],
+      "expect": {}
+    }
+  ]
+}
