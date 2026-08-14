@@ -242,6 +242,41 @@ def test_calls_that_succeeded_before_a_failure_are_kept(monkeypatch):
     assert modules_of(steps).count("DocumentationAgent") == 2
 
 
+def test_a_failed_composing_call_still_hands_over_the_plan(monkeypatch):
+    from lib import llm
+    from lib.steps import make_step
+
+    crew = llm.call  # the fake, already installed by the fixture
+    failed_step = make_step("Supervisor", "compose", "user", {"error": "timed out"})
+
+    def fail_on_compose(module, system_prompt, user_prompt, **kwargs):
+        if "What the crew came back with:" in user_prompt:
+            raise llm.LLMError("Supervisor: timed out", steps=[failed_step])
+        return crew(module, system_prompt, user_prompt, **kwargs)
+
+    monkeypatch.setattr(llm, "call", fail_on_compose)
+    text, steps = supervisor.run(COMPLETE, [])
+
+    # Six calls and two external quotas are already spent by the time we compose.
+    assert "Onward flight" in text
+    assert "Somewhere to sleep" in text
+    assert failed_step in steps          # and the call that failed is still in the trace
+
+
+def test_a_half_labelled_option_still_produces_a_plan(monkeypatch):
+    """Agent validation guarantees an id and a parseable date, not a full label."""
+    from lib.agents import flight_agent
+
+    bare = {"options": [{"id": "F1", "depart": (datetime.now() + timedelta(days=1)).isoformat()}],
+            "recommended_id": "F1"}
+    monkeypatch.setattr(flight_agent, "run", lambda *a, **k: (bare, []))
+
+    text, _ = supervisor.run(COMPLETE, [])
+
+    assert "Onward flight" in text
+    assert "Could not complete: onward flights" not in text
+
+
 def test_a_failing_flight_search_skips_the_stay_rather_than_guessing_nights(monkeypatch):
     from lib.agents import flight_agent
 

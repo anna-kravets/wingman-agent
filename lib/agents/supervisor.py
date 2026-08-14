@@ -212,35 +212,51 @@ def _extract_request(prompt: str, history: list[dict]) -> tuple[dict, dict]:
     return _request_from(parsed, bool(history)), step
 
 
+def _line(label: str, *parts: str) -> str:
+    """One digest line, built only from the fields that actually came back."""
+    return f"{label}: " + ", ".join(part for part in parts if part) + "."
+
+
 def _digest(results: dict, failures: list[str]) -> str:
     """What the crew came back with, as flat lines.
 
     Both the composing call's input and — if that call is the one that fails — the
-    plan the passenger gets instead.
+    plan the passenger gets instead. Nothing here is indexed with []: the agents'
+    validation guarantees an id and a parseable date, not a label, and a model that
+    left "area" out must not cost the passenger a plan that six calls already paid for.
     """
     lines = []
 
     flight = _recommended(results.get("flight") or {})
     if flight:
-        lines.append(
-            f"Onward flight: {flight['airline']} {flight['flight_number']}, "
-            f"{flight['origin']} to {flight['destination']}, departs {flight['depart']}."
-        )
+        lines.append(_line(
+            "Onward flight",
+            f"{flight.get('airline') or ''} {flight.get('flight_number') or ''}".strip(),
+            " to ".join(p for p in (flight.get("origin"), flight.get("destination")) if p),
+            f"departs {flight['depart']}" if flight.get("depart") else "",
+        ))
 
     stay = _recommended(results.get("stay") or {})
     if stay:
-        meals = "meals included" if stay.get("meals_included") else "no meals"
-        lines.append(
-            f"Somewhere to sleep: {stay['name']}, {stay['area']}, "
-            f"{stay['check_in']} to {stay['check_out']} ({stay['nights']} night(s), {meals})."
-        )
+        lines.append(_line(
+            "Somewhere to sleep",
+            stay.get("name") or "",
+            stay.get("area") or "",
+            " to ".join(p for p in (stay.get("check_in"), stay.get("check_out")) if p),
+            f"{stay['nights']} night(s)" if stay.get("nights") else "",
+            "meals included" if stay.get("meals_included") else "no meals",
+        ))
 
     rights = results.get("rights")
     if rights:
         lines.append(f"What you are owed (under {rights.get('regulation')}):")
-        for item in rights.get("entitlements", []):
-            lines.append(f"  - {item['kind']}: {item['summary']} [{item['source']}]")
-        for action in rights.get("next_actions", []):
+        for item in rights.get("entitlements") or []:
+            source = item.get("source")
+            lines.append(
+                f"  - {item.get('kind')}: {item.get('summary')}"
+                + (f" [{source}]" if source else "")
+            )
+        for action in rights.get("next_actions") or []:
             lines.append(f"  Next: {action}")
 
     for failure in failures:
