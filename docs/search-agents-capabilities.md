@@ -1,0 +1,178 @@
+# FlightAgent + AccommodationAgent — what they can and cannot do
+
+**Validated:** 14/8/2026, 15:30 · **Model:** `MB5R2CF-azure/gpt-5.4-mini`
+**Owner:** Person B · **Branch:** `validate-search-agents`
+
+Written from a real run against a real model, not from design intent. Every capability below
+names the scenario that proves it. A claim with no scenario behind it is not in this document.
+
+**Re-run it yourself:**
+
+```powershell
+python scripts/run_search_agents_live.py --confirm-paid-calls --all --output live-test-output/final.json
+python scripts/evaluate_search_artifact.py --artifact live-test-output/final.json
+```
+
+The evaluator needs no keys and no database — it reads the saved artifact. Scenarios live in
+`evals/search_agent_cases.json`; the checks in `evals/search_artifact.py`.
+
+**Measured cost of the whole validation** (two full runs plus three retries):
+
+| | |
+|---|---|
+| Chat calls, final run | **14** (12 scenarios; the three refusal scenarios cost zero) |
+| Tokens, final run | 18,218 prompt + 7,689 completion |
+| AeroDataBox units, whole exercise | **~54 of 600** (590 → 536 remaining) |
+| Failing checks | **0 of 45** |
+
+---
+
+## 1. Verified capabilities
+
+| Capability | Evidence |
+|---|---|
+| **Options are real flights, never invented.** Every `flight_number` returned was present in the candidate list the tool supplied. | `grounding_flights` passed on `tlv-fra-cancelled` (2 of 2), `lhr-jfk-cancelled` (3 chosen from 20), `same-day-no-hotel` (3 of 3), `earlier-flight-followup`, `compare-options` |
+| **Hotels are real properties**, chosen from OpenStreetMap results with exact distances. | `grounding_hotels` passed on `tlv-fra-cancelled` and `overnight-one-night` (8 of 8) |
+| **Cross-airline options** — the Contract of Carriage differentiator. On the demo route it returned Condor 4308 (05:15) *and* Lufthansa 687 (16:30), not just the carrier that cancelled. | `tlv-fra-cancelled` |
+| **The date sync works.** Hotel `check_in`/`check_out`/`nights` matched the window the Supervisor derived from the chosen flight, every time. | `date_sync` passed on `tlv-fra-cancelled`, `overnight-one-night` |
+| **No hotel when none is needed.** A replacement leaving the same day skips `AccommodationAgent` entirely rather than booking a pointless night. | `same-day-no-hotel` |
+| **Prices always read as estimates.** e.g. *"Roughly EUR 110-160 for the night (estimate - not a quoted price)"*. | `price_honesty` passed on `tlv-fra-cancelled`, `overnight-one-night`, `price-question` |
+| **FlightAgent never quotes a fare**, even when asked "how much will this cost me?". | `no_asserted_fare` passed on `price-question` |
+| **Meals are never asserted.** `meals_included` stayed `false` with *"Meals were not confirmed - ask at the desk"*, because OSM had no breakfast tag. | `meals_honesty` passed on `tlv-fra-cancelled`, `overnight-one-night` |
+| **Carriage questions are deferred, not guessed.** A ski-bag question produced *"Whether your ticket can be moved across is set by your Contract of Carriage - see the entitlements section"* — no invented allowance. | `deferral` passed on `baggage-followup` |
+| **No booking site is ever named.** | `no_booking_site` passed on all five scenarios that check it |
+| **Conversation history reaches both agents** on follow-up turns. | `history_reached_agents` passed on `baggage-followup`, `price-question`, `earlier-flight-followup`, `compare-options` |
+| **The trace is well-formed.** One step per agent, only the four locked module names, exact key shapes. | `trace_shape` passed on all 12 |
+| **No live data ⇒ refusal, not invention**, with a plain reason and no LLM call at all. | `degraded_refusal` passed on `degraded-flights`, `thin-route`, `sparse-osm-airport` |
+
+---
+
+## 2. What changed because of this validation
+
+**The degradation behaviour was wrong and has been reversed.**
+
+The design said that when the data source fails, the agents should fall back to LLM-invented
+options labelled "illustrative", so a demo survives an exhausted quota. **That never worked.**
+With no candidates the model returned `{"options": []}` in every scenario — its system prompt
+says *"choose only from that list"*, and that outranks a user-prompt instruction to improvise.
+The passenger got `Could not complete: onward flights (FlightAgent: no option came back with a
+usable departure time)` — an internal parser error surfaced as a user-facing message.
+
+It was not forced to comply, because the model's instinct was better than the design. A
+fabricated flight number for a real airline is *actionable*: a passenger can walk to the desk
+and ask for "LH 999". That is exactly the hallucination this project positions itself against,
+and an "illustrative" label does not survive a panicked reader at a gate.
+
+Both agents now refuse **before calling the model**, and say why:
+
+> live flight schedules were not available for this route, so no departure could be verified.
+> Nothing was invented - check your airline's app or the departures board for the next flight.
+
+A degraded turn dropped from one LLM call to **zero**. Logged as D3a in the design spec and in
+`PROJECT_PLAN.md` §6.
+
+---
+
+## 3. Limitations, by root cause
+
+### No free data source exists (2026)
+- **No fares, no prices, no seat availability.** Amadeus Self-Service closed 17/7/2026 and
+  nothing free replaced it. `price_estimate` is the model reasoning, always hedged.
+- **No baggage or carriage terms.** Schedules cannot answer them. These are deferred to
+  `DocumentationAgent` and its Contract of Carriage corpus.
+- **No confirmation that a hotel has a room free tonight.** Wingman proposes; it never books.
+
+### The shape of the AeroDataBox API
+- **Direct flights only.** The endpoint returns departures, not itineraries — it cannot build
+  TLV→VIE→FRA, and verifying a second leg would cost another 2 units.
+- **12-hour windows**, and a search is capped at two of them, so it sees at most 24 hours ahead.
+- A route with **no service in that window returns nothing at all**, which lands in the refusal
+  path — correct, but it means "no flights found" and "route not served" are indistinguishable
+  to the passenger. `thin-route` (TLV→NCE) behaved this way on the day.
+
+### OpenStreetMap sparseness
+- Reliable: **name, position, and therefore exact distance to the terminal**.
+- Unreliable or absent: star ratings (1 of 20 near TLV), websites, addresses, meals.
+- Names are often local-language; the tool prefers `name:en` and falls back.
+- **Coverage varies sharply by airport.** TLV returns 20 hotels within 12 km; **Ramon/Eilat
+  (ETM) returns zero**, which triggers refusal (`sparse-osm-airport`).
+- Airports absent from the table are unknown: `VDA` (closed) is not in the 3,267-airport
+  OurAirports extract, so it cannot be geolocated at all.
+
+### Quota
+- 600 units/month, **2 units per call**; a search costs 2 or 4.
+- **A route with no results costs the maximum 4 units and caches nothing**, so asking twice
+  about an unserved route pays twice. See §6.
+- The cache key includes the **hour**, so the same route searched 22:15 and 23:30 pays twice.
+
+### Blocked on Person A, not on the data
+- `_compose` is still a deterministic stub, so **a follow-up turn does not read as an answer to
+  the question asked.** The agents receive the history and act on it — verified — but the final
+  prose is assembled by string concatenation. "Compare the two options for me" returns a plan,
+  not a comparison. The multi-turn capability is real at the agent layer and invisible at the
+  text layer until `_compose` makes a real LLM call.
+- The refusal message currently surfaces as `Could not complete: onward flights (...)`, which
+  reads like an error rather than an explanation. The wording inside the parentheses is
+  passenger-ready; the framing around it is `_compose`'s.
+
+---
+
+## 4. Scenarios that did not reproduce their intended condition
+
+Recorded honestly rather than papered over — real schedules change daily.
+
+| Scenario | Intended | What happened on 14/8 |
+|---|---|---|
+| `thin-route` | A route with 1–2 departures, exercising window widening | TLV→NCE returned **zero** matching departures, so it exercised refusal instead. Widening is covered by `tests/test_tools_flights.py::test_a_thin_route_widens_the_window_once` against a captured fixture. |
+| `multi-night` | A 2+ night strand | Same route, same outcome: no flight, so no stay window. Multi-night logic is covered deterministically by `tests/test_supervisor.py::test_stay_window_spans_multiple_nights`. |
+| `lhr-jfk-cancelled` | Long-haul with an overnight stay | The next departure left the same day, so no hotel was needed — the flight half validated fully, the hotel half skipped. |
+| `sparse-osm-airport` | An airport with *few* hotels | ETM has **none** in OSM, so it tested the refusal path rather than a thin list. |
+
+---
+
+## 5. Failure modes — what the passenger actually sees
+
+| When | Result |
+|---|---|
+| AeroDataBox down, out of quota, or key unset | FlightAgent refuses without calling the model; the passenger is told nothing could be verified and to check the airline's app or the departures board. No hotel is proposed, because the nights cannot be derived without a flight. |
+| Overpass down or the airport has no hotels | AccommodationAgent refuses the same way, and points at the airline desk — which is also where a hotel voucher would be issued. |
+| Overpass returns 504 (observed during development) | The tool silently retries on a mirror; the passenger sees nothing. |
+| The model returns an unusable option | Malformed options are dropped; if none survives, the call still appears in `steps[]` so the trace stays truthful. |
+| `LLMOD_API_KEY` unset | Both agents fail through the Supervisor's partial-failure path; the rest of the plan still returns. |
+
+---
+
+## 6. Recommendations (not applied — Person B's call)
+
+1. **Cache empty results.** A route with no service currently costs 4 units *every* time it is
+   asked about. On the tightest constraint in the project, that is the cheapest fix available.
+2. **Widen the cache key from the hour to the day**, or the same route an hour apart pays twice.
+3. **Outputs lean hard on the one-shot example.** `fare_conditions` came back near-verbatim from
+   the prompt's example wording across several scenarios. Correct and consistent, but templated;
+   worth deciding whether that reads as reassuring or robotic.
+4. **"No flights found" and "route not served" are indistinguishable.** If it matters for the
+   demo, the refusal message could say which.
+
+---
+
+## 7. For the team meeting
+
+**Not Person B's, but blocking submission:**
+
+1. **`/api/agent_info` returns `prompt_examples: []`** — a hard graded requirement (each needs
+   `prompt`, `full_response`, `steps`).
+2. **Its `description` does not say prices are estimates**, which the 9/8 data-source decision
+   requires.
+3. **These two are blocked behind the Supervisor's stubs.** `_extract_request` and `_compose`
+   emit `steps[]` entries without making any LLM call, so `/api/execute` currently reports two
+   `Supervisor` steps backed by nothing. Capturing `prompt_examples[]` today would bake that
+   fiction into a graded artifact. **Person A's stubs are the critical path to the last graded
+   deliverable.**
+
+**Requests:**
+
+4. **Narrow `needs` on follow-up turns.** A question like "can I take my ski bag on it?"
+   currently re-dispatches FlightAgent and spends API units re-searching a route the passenger
+   did not ask about.
+5. **DocumentationAgent must actually answer carriage questions**, because FlightAgent now
+   refuses them by design. The deferral is only as good as what it defers to.
