@@ -75,6 +75,11 @@ where they sleep is ["stay"], one about baggage, meals, money or what the airlin
 ["rights"]. Return an empty "needs" when the question can be answered from what is already on
 the table. Re-running the whole crew for a one-line question costs the passenger time and
 costs the project money.
+
+One exception. If the last thing you said was a request for missing details, this message is
+the passenger completing their first request, not a follow-up: they are answering you, not
+asking for less. Fill in what they just gave, keep what they said before, and set "needs" the
+way you would for a first message.
 """
 
 COMPOSE_SYSTEM_PROMPT = """You write the passenger's recovery plan from the results the crew returned.

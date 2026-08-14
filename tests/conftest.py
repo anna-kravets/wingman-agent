@@ -51,6 +51,10 @@ def _accommodation_response(user_prompt: str) -> dict:
     }
 
 
+# The phrase the Supervisor's refinement gate opens with, used here to spot a message
+# that is answering it.
+GATE_MARKER = "I need a couple of details"
+
 # What a follow-up question is about, as far as the fake is concerned. The real model
 # is told to work this out from the message (supervisor.REFINE_SYSTEM_PROMPT); the fake
 # keyword-matches so the narrowing is testable without a key.
@@ -77,11 +81,19 @@ def _refine_response(user_prompt: str) -> dict:
     Extracts from the whole prompt, earlier turns included, so a follow-up inherits
     the details the passenger gave once — which is what the real prompt asks for.
     """
-    message = user_prompt.rpartition("Passenger's message:")[2].strip().lower()
+    earlier, _, message = user_prompt.rpartition("Passenger's message:")
+    message = message.strip().lower()
     disruption = _disruption_in(user_prompt.lower())
+    # Someone answering the refinement gate is completing their first request, not
+    # asking a narrower question — the real prompt carries the same exception.
+    answering_the_gate = GATE_MARKER in earlier.rsplit("  you:", 1)[-1]
     # A message that reports a disruption is a fresh request even mid-conversation;
     # only a question about a plan already on the table narrows the crew.
-    follow_up = "Earlier in this conversation:" in user_prompt and not _disruption_in(message)
+    follow_up = (
+        "Earlier in this conversation:" in user_prompt
+        and not _disruption_in(message)
+        and not answering_the_gate
+    )
 
     flight = re.search(r"\b([A-Z]{2})\s?(\d{2,4})\b", user_prompt)
     route = re.search(r"\b([A-Z]{3})\s*(?:->|→|to)\s*([A-Z]{3})\b", user_prompt)

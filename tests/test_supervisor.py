@@ -100,9 +100,28 @@ def test_a_flight_follow_up_dispatches_only_the_flight_agent():
     assert set(modules_of(steps)) == {"Supervisor", "FlightAgent"}
 
 
+def test_answering_the_gate_dispatches_the_crew_instead_of_asking_again():
+    """The passenger is completing their first request, not narrowing it.
+
+    Read literally, "set needs to only what this message asks for" turns an answer to
+    the gate into a request for nothing — and a gate that asks the same four questions
+    forever, which is what the stub Supervisor did to a lowercase reply.
+    """
+    history = [{
+        "prompt": "my flight got cancelled help",
+        "response": "Before I can help, I need a couple of details:\n  - Which airline...",
+    }]
+    # Deliberately without the word "cancelled": what happened was said in the first
+    # message, and this reply only fills the gaps — exactly how a passenger answers.
+    text, steps = supervisor.run("el al LY315, TLV to MAD, I'm still at TLV", history)
+
+    assert "I need a couple of details" not in text
+    assert set(modules_of(steps)) == MODULES
+
+
 def test_a_follow_up_that_needs_nobody_is_answered_instead_of_interrogated():
     # Details are still missing, but nothing is being dispatched, so nothing is blocked.
-    history = [{"prompt": "my flight got cancelled help", "response": "I need a couple of details"}]
+    history = [{"prompt": "what can you do?", "response": "I sort out flights, beds and rights."}]
     text, steps = supervisor.run("never mind, thanks", history)
 
     assert modules_of(steps) == ["Supervisor", "Supervisor"]  # refinement, then compose
