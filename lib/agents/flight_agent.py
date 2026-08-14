@@ -118,8 +118,17 @@ def _validate(payload: dict) -> dict:
 
 def run(request: dict, history: list[dict]) -> tuple[dict, list[dict]]:
     """Returns (payload, steps). See `docs/PROJECT_PLAN.md` §1 for both shapes."""
+    origin, destination = request.get("origin"), request.get("destination")
+
+    # Decided offline and free: a route that cannot exist should not cost 8 units
+    # discovering that, and "live schedules were unavailable" is the wrong thing
+    # to tell someone who asked for TLV to TLV.
+    problem = flights.route_problem(origin, destination)
+    if problem:
+        raise llm.LLMError(f"{MODULE}: {problem}", steps=[])
+
     after = datetime.fromisoformat(request["local_now"])
-    candidates = flights.search(request.get("origin"), request.get("destination"), after)
+    candidates = flights.search(origin, destination, after)
 
     if not candidates:
         # No LLM call at all. With nothing verified to choose from, the only honest

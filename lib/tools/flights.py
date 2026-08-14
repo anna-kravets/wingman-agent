@@ -6,7 +6,9 @@ Filtering and trimming happen here on purpose. A raw airport window is about
 project's $13 budget for no gain.
 
 Free plan economics: 600 units/month, 2 units per call. A search is capped at
-two calls, and `live_data_enabled()` keeps development off the meter entirely.
+four calls covering 48 hours, results are cached per route per day, and
+`live_data_enabled()` keeps development off the meter entirely. Routes that
+cannot exist are rejected before any of that.
 """
 
 import os
@@ -15,7 +17,7 @@ from datetime import datetime, timedelta
 
 import httpx
 
-from lib.tools import live_data_enabled
+from lib.tools import airports, live_data_enabled
 
 WINDOW_HOURS = 12          # AeroDataBox caps a departures range at 12 hours,
                            # verified 14/8/2026: a 24h request returns HTTP 400
@@ -45,7 +47,33 @@ UNUSABLE_STATUSES = frozenset({
     "canceled", "cancelled", "canceleduncertain", "cancelleduncertain", "gateclosed",
 })
 
+# hotels.search has always capped its list; flights had no bound, so a busy route
+# could inflate the prompt - and the token bill - without limit.
+MAX_CANDIDATES = 12
+
 _cache: dict[tuple, list[dict]] = {}
+
+
+def route_problem(origin: str | None, destination: str | None) -> str | None:
+    """Why this route cannot be searched at all, or None if it can.
+
+    Decided offline, before a single unit is spent. A live run widened TLV->TLV
+    through all four windows, spent 8 units on a route that cannot exist, and
+    then told the passenger that live schedules were unavailable - which was
+    not true and not useful.
+    """
+    start = (origin or "").strip().upper()
+    end = (destination or "").strip().upper()
+    if not (start and end):
+        return "I do not have both airports for this journey."
+    if start == end:
+        return (f"the origin and destination are both {start}, "
+                f"so there is no flight to look for.")
+    for code in (start, end):
+        if not airports.lookup(code):
+            return (f"{code} is not an airport I can look up - it may be closed, or the "
+                    f"code may be wrong. Check it and tell me again.")
+    return None
 
 
 def _is_usable(status: str | None) -> bool:
@@ -99,7 +127,7 @@ def search(origin: str, destination: str, after: datetime) -> list[dict]:
     Returns [] on any failure or when live data is switched off: the agent
     degrades to reasoning unaided rather than losing the passenger's turn.
     """
-    if not (origin and destination and live_data_enabled()):
+    if not live_data_enabled() or route_problem(origin, destination):
         return []
     key = os.environ.get("AERODATABOX_API_KEY")
     if not key:
@@ -107,17 +135,21 @@ def search(origin: str, destination: str, after: datetime) -> list[dict]:
     host = os.environ.get("AERODATABOX_API_HOST") or DEFAULT_HOST
 
     origin, destination = origin.strip().upper(), destination.strip().upper()
-    cache_key = (origin, destination, after.strftime("%Y-%m-%dT%H"))
+    # Keyed by day, not hour: one live run paid three times for the same TLV->FRA
+    # schedule because the passenger's clock read 05, 22 and 23.
+    cache_key = (origin, destination, after.date().isoformat())
     if cache_key in _cache:
         return _cache[cache_key]
 
     found: list[dict] = []
+    fetch_failed = False
     start = after
     for _ in range(MAX_WINDOWS):
         end = start + timedelta(hours=WINDOW_HOURS)
         try:
             departures = _window(host, key, origin, start, end)
         except (httpx.HTTPError, ValueError, KeyError):
+            fetch_failed = True
             break
         for departure in departures:
             option = _trim(departure)
@@ -129,6 +161,11 @@ def search(origin: str, destination: str, after: datetime) -> list[dict]:
             break
         start = end
 
-    if found:
+    found.sort(key=lambda option: option["depart"])
+    found = found[:MAX_CANDIDATES]
+
+    # A genuine "this route is not served" is worth remembering; a transport
+    # failure is not, or a warm instance stays broken for the rest of its life.
+    if not fetch_failed:
         _cache[cache_key] = found
     return found

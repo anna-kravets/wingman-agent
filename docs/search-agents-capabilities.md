@@ -1,6 +1,6 @@
 # FlightAgent + AccommodationAgent — what they can and cannot do
 
-**Validated:** 14/8/2026, 15:30 · **Model:** `MB5R2CF-azure/gpt-5.4-mini`
+**Validated:** 14/8/2026 (exhaustive run: 16 scenarios) · **Model:** `MB5R2CF-azure/gpt-5.4-mini`
 **Owner:** Person B · **Branch:** `validate-search-agents`
 
 Written from a real run against a real model, not from design intent. Every capability below
@@ -23,7 +23,9 @@ The evaluator needs no keys and no database — it reads the saved artifact. Sce
 | Chat calls, final run | **14** (12 scenarios; the three refusal scenarios cost zero) |
 | Tokens, final run | 18,218 prompt + 7,689 completion |
 | AeroDataBox units, whole exercise | **~54 of 600** (590 → 536 remaining) |
-| Failing checks | **0 of 45** |
+| Failing checks | **0 of 57** across 16 scenarios |
+| Slowest scenario | **16.8s** against Vercel's 300s ceiling |
+| Exhaustive run cost | 23 LLM calls, 32,935 + 15,458 tokens, **54 API units** |
 
 ---
 
@@ -174,9 +176,11 @@ Recorded honestly rather than papered over — real schedules change daily.
 
 ## 6. Recommendations (not applied — Person B's call)
 
-1. **Cache empty results.** A route with no service currently costs 4 units *every* time it is
-   asked about. On the tightest constraint in the project, that is the cheapest fix available.
-2. **Widen the cache key from the hour to the day**, or the same route an hour apart pays twice.
+1. ~~Cache empty results~~ and ~~widen the cache key to the day~~ - **both done (D12)**, along with
+   rejecting impossible routes offline and capping the candidate list.
+2. **Prompt injection is still unprobed.** Passenger text reaches the model directly and the
+   no-booking-site rule is an explicit project constraint. Deliberately out of scope for this
+   round; worth a decision at the meeting.
 3. **Foursquare Places** (reportedly 100k free calls/month) would add user ratings and a price
    *band* on top of what OSM gives. It needs someone to create an account, and it still would not
    give a bookable rate — so it buys a nicer hotel card, not a better answer. Deferred.

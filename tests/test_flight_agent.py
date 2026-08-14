@@ -128,5 +128,29 @@ def test_history_reaches_the_prompt(monkeypatch):
     assert "what about earlier?" in steps[0]["prompt"]["user_prompt"]
 
 
+def test_an_impossible_route_is_refused_before_any_search(monkeypatch):
+    searched, called = [], []
+    monkeypatch.setattr(flights, "search", lambda *a, **k: searched.append(1) or [])
+    monkeypatch.setattr(llm, "call", lambda *a, **k: called.append(1))
+
+    with pytest.raises(llm.LLMError) as caught:
+        flight_agent.run(dict(REQUEST, destination="TLV"), [])
+
+    # Neither an API unit nor an LLM call is spent discovering the obvious.
+    assert not searched and not called
+    assert "no flight to look for" in str(caught.value)
+
+
+def test_an_unknown_airport_says_so_rather_than_blaming_the_data(monkeypatch):
+    monkeypatch.setattr(llm, "call", lambda *a, **k: pytest.fail("should not be called"))
+
+    with pytest.raises(llm.LLMError) as caught:
+        flight_agent.run(dict(REQUEST, origin="VDA"), [])
+
+    message = str(caught.value)
+    assert "VDA" in message and "not an airport I can look up" in message
+    assert "schedules were not available" not in message
+
+
 def test_the_stub_flag_is_gone():
     assert not hasattr(flight_agent, "IS_STUB")
