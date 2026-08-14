@@ -160,6 +160,21 @@ def test_meals_honesty_passes_when_the_candidate_data_supports_it():
     assert status_of(results, "meals_honesty") == "pass"
 
 
+def test_no_unusable_status_fails_when_a_departed_flight_is_offered():
+    # The real regression: a live run recommended a flight already marked Departed.
+    gone = [dict(FLIGHT_CANDIDATES[0], status="Departed")]
+    art = artifact_with([GOOD_FLIGHT], [GOOD_HOTEL],
+                        flight_prompt_text=flight_prompt(candidates=gone))
+    results = evaluate(art, case_with("no_unusable_status"))
+    assert status_of(results, "no_unusable_status") == "fail"
+
+
+def test_no_unusable_status_passes_for_a_catchable_flight():
+    results = evaluate(artifact_with([GOOD_FLIGHT], [GOOD_HOTEL]),
+                       case_with("no_unusable_status"))
+    assert status_of(results, "no_unusable_status") == "pass"
+
+
 def test_no_booking_site_fails_when_one_is_named():
     leaky = dict(GOOD_HOTEL, notes="Cheaper on booking.com")
     results = evaluate(artifact_with([GOOD_FLIGHT], [leaky]), case_with("no_booking_site"))

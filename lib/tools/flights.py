@@ -25,7 +25,25 @@ RETRY_PAUSE_SECONDS = 2.0  # the BASIC plan rate-limits per second
 
 DEFAULT_HOST = "aerodatabox.p.rapidapi.com"
 
+# Statuses a passenger cannot act on: the flight has gone, been called off, or is
+# closed to boarding. Live validation on 14/8/2026 caught the model recommending a
+# flight already marked "Departed" - it flagged the status in one run and ignored it
+# in the next. Whether an option is catchable at all is not a judgement call, so it
+# is decided here rather than left to a prompt.
+#
+# A deny-list, not an allow-list, on purpose: an unfamiliar status AeroDataBox adds
+# later should still reach the passenger rather than silently emptying the list and
+# triggering a "nothing could be verified" refusal.
+UNUSABLE_STATUSES = frozenset({
+    "departed", "arrived", "enroute", "approaching", "diverted",
+    "canceled", "cancelled", "canceleduncertain", "cancelleduncertain", "gateclosed",
+})
+
 _cache: dict[tuple, list[dict]] = {}
+
+
+def _is_usable(status: str | None) -> bool:
+    return str(status or "").strip().lower() not in UNUSABLE_STATUSES
 
 
 def _iso(stamp: str | None) -> str | None:
@@ -97,7 +115,8 @@ def search(origin: str, destination: str, after: datetime) -> list[dict]:
             break
         for departure in departures:
             option = _trim(departure)
-            if option["destination"] == destination and option["depart"]:
+            if (option["destination"] == destination and option["depart"]
+                    and _is_usable(option["status"])):
                 option["origin"] = origin
                 found.append(option)
         if len(found) >= MIN_OPTIONS:

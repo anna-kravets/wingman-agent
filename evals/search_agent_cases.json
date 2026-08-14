@@ -10,7 +10,7 @@
       "request_override": {"party_size": 2},
       "local_now": {"offset_days": 0, "time": "22:15"},
       "live_data": true,
-      "checks": ["trace_shape", "grounding_flights", "grounding_hotels", "date_sync", "no_booking_site", "price_honesty", "meals_honesty"],
+      "checks": ["trace_shape", "grounding_flights", "no_unusable_status", "grounding_hotels", "date_sync", "no_booking_site", "price_honesty", "meals_honesty"],
       "expect": {"accommodation_dispatched": true}
     },
     {
@@ -22,7 +22,7 @@
       "request_override": {"party_size": 1},
       "local_now": {"offset_days": 0, "time": "21:00"},
       "live_data": true,
-      "checks": ["trace_shape", "grounding_flights", "grounding_hotels", "date_sync", "no_booking_site", "price_honesty", "meals_honesty"],
+      "checks": ["trace_shape", "grounding_flights", "no_unusable_status", "grounding_hotels", "date_sync", "no_booking_site", "price_honesty", "meals_honesty"],
       "expect": {"accommodation_dispatched": true}
     },
     {
@@ -70,7 +70,7 @@
       "request_override": {"party_size": 1},
       "local_now": {"offset_days": 0, "time": "05:00"},
       "live_data": true,
-      "checks": ["trace_shape", "grounding_flights", "no_accommodation"],
+      "checks": ["trace_shape", "grounding_flights", "no_unusable_status", "no_accommodation"],
       "expect": {"accommodation_dispatched": false}
     },
     {
@@ -136,7 +136,7 @@
       "request_override": {"party_size": 2, "airline": "LH", "flight_number": "LH318", "origin": "TLV", "destination": "FRA", "stranded_at": "TLV", "disruption": "cancelled"},
       "local_now": {"offset_days": 0, "time": "22:30"},
       "live_data": true,
-      "checks": ["trace_shape", "grounding_flights", "history_reached_agents"],
+      "checks": ["trace_shape", "grounding_flights", "no_unusable_status", "history_reached_agents"],
       "expect": {}
     },
     {
@@ -150,7 +150,7 @@
       "request_override": {"party_size": 2, "airline": "LH", "flight_number": "LH318", "origin": "TLV", "destination": "FRA", "stranded_at": "TLV", "disruption": "cancelled"},
       "local_now": {"offset_days": 0, "time": "22:35"},
       "live_data": true,
-      "checks": ["trace_shape", "grounding_flights", "history_reached_agents"],
+      "checks": ["trace_shape", "grounding_flights", "no_unusable_status", "history_reached_agents"],
       "expect": {}
     }
   ]

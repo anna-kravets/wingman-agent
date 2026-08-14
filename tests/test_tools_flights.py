@@ -136,3 +136,72 @@ def test_transport_failure_degrades_to_empty(monkeypatch):
     monkeypatch.setattr(httpx, "get", boom)
 
     assert flights.search("TLV", "FRA", AFTER) == []
+
+
+# --- status filtering -----------------------------------------------------------
+# Live validation recommended a flight whose status was already "Departed": the model
+# flagged it in one run and ignored it in the next. Whether an option is catchable at
+# all is not a judgement call, so it is decided here rather than in a prompt.
+
+
+def respond_once(payload):
+    """Serve `payload` for the first window, nothing for the second.
+
+    Fewer than MIN_OPTIONS results makes search widen the window; replaying the
+    same payload would double every flight and mask what is being tested.
+    """
+    calls = []
+
+    def get(url, **kwargs):
+        calls.append(url)
+        body = payload if len(calls) == 1 else {"departures": []}
+        return httpx.Response(200, json=body, request=httpx.Request("GET", url))
+    return get
+
+
+def departure(number, status):
+    return {
+        "number": number,
+        "airline": {"name": "Lufthansa", "iata": "LH"},
+        "aircraft": {"model": "Airbus A320"},
+        "status": status,
+        "departure": {"scheduledTime": {"local": "2026-08-10 09:40+03:00"}, "terminal": "3"},
+        "arrival": {"airport": {"iata": "FRA"},
+                    "scheduledTime": {"local": "2026-08-10 13:05+02:00"}},
+    }
+
+
+@pytest.mark.parametrize("status", ["Departed", "Canceled", "Cancelled", "Arrived",
+                                    "EnRoute", "Diverted", "GateClosed", "departed"])
+def test_unusable_statuses_are_dropped(monkeypatch, status):
+    payload = {"departures": [departure("LH 1", status), departure("LH 2", "Expected")]}
+    monkeypatch.setattr(httpx, "get", respond_once(payload))
+
+    results = flights.search("TLV", "FRA", AFTER)
+
+    assert [r["flight"] for r in results] == ["LH 2"]
+
+
+def test_delayed_flights_are_still_offered(monkeypatch):
+    # A delayed flight has not left; it may be exactly what the passenger needs.
+    payload = {"departures": [departure("LH 1", "Delayed")]}
+    monkeypatch.setattr(httpx, "get", respond_once(payload))
+
+    assert [r["flight"] for r in flights.search("TLV", "FRA", AFTER)] == ["LH 1"]
+
+
+def test_an_unrecognised_status_is_kept(monkeypatch):
+    # Deny-list, not allow-list: a new status AeroDataBox invents must not silently
+    # hide every option and trigger a false "nothing could be verified" refusal.
+    payload = {"departures": [departure("LH 1", "SomeNewStatus")]}
+    monkeypatch.setattr(httpx, "get", respond_once(payload))
+
+    assert [r["flight"] for r in flights.search("TLV", "FRA", AFTER)] == ["LH 1"]
+
+
+def test_all_candidates_unusable_returns_empty(monkeypatch):
+    payload = {"departures": [departure("LH 1", "Departed"), departure("LH 2", "Canceled")]}
+    monkeypatch.setattr(httpx, "get", respond_once(payload))
+
+    # Which is correct: the agent then refuses rather than offering a flight that left.
+    assert flights.search("TLV", "FRA", AFTER) == []

@@ -14,6 +14,8 @@ from __future__ import annotations
 import json
 import re
 
+from lib.tools.flights import UNUSABLE_STATUSES
+
 MODULES = {"Supervisor", "FlightAgent", "AccommodationAgent", "DocumentationAgent"}
 
 FLIGHT_MARKER = "Candidates (real, verified departures"
@@ -219,6 +221,31 @@ def _check_degraded_refusal(artifact, case):
                    else "refused silently - the passenger was never told")
 
 
+def _check_no_unusable_status(artifact, case):
+    """No option may be one the passenger cannot actually catch.
+
+    Added after live validation recommended a flight already marked "Departed".
+    The tool now filters these out, so this guards the filter rather than the model.
+    """
+    step = _step(artifact, "FlightAgent")
+    if not step:
+        return _result("no_unusable_status", True, "FlightAgent was not dispatched", skip=True)
+    candidates = {_normalise(c.get("flight")): c
+                  for c in candidates_from_prompt(step["prompt"]["user_prompt"])}
+    if not candidates:
+        return _result("no_unusable_status", True, "no candidates to check", skip=True)
+
+    offered = []
+    for option in _options(step):
+        candidate = candidates.get(_normalise(option.get("flight_number")))
+        status = str((candidate or {}).get("status", "")).strip().lower()
+        if status in UNUSABLE_STATUSES:
+            offered.append(f"{option.get('flight_number')} ({status})")
+    return _result("no_unusable_status", not offered,
+                   f"offered unusable: {offered}" if offered
+                   else f"all {len(_options(step))} options are catchable")
+
+
 def _check_deferral(artifact, case):
     step = _step(artifact, "FlightAgent")
     if not step:
@@ -255,6 +282,7 @@ CHECKS = {
     "no_asserted_fare": _check_no_asserted_fare,
     "meals_honesty": _check_meals_honesty,
     "degraded_refusal": _check_degraded_refusal,
+    "no_unusable_status": _check_no_unusable_status,
     "deferral": _check_deferral,
     "history_reached_agents": _check_history_reached_agents,
 }

@@ -21,6 +21,7 @@ CHECK_NAMES = {
     "price_honesty",
     "no_asserted_fare",
     "meals_honesty",
+    "no_unusable_status",
     "degraded_refusal",
     "deferral",
     "history_reached_agents",

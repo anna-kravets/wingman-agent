@@ -44,12 +44,35 @@ The evaluator needs no keys and no database — it reads the saved artifact. Sce
 | **Conversation history reaches both agents** on follow-up turns. | `history_reached_agents` passed on `baggage-followup`, `price-question`, `earlier-flight-followup`, `compare-options` |
 | **The trace is well-formed.** One step per agent, only the four locked module names, exact key shapes. | `trace_shape` passed on all 12 |
 | **No live data ⇒ refusal, not invention**, with a plain reason and no LLM call at all. | `degraded_refusal` passed on `degraded-flights`, `thin-route`, `sparse-osm-airport` |
+| **Flights the passenger cannot catch are never offered** — departed, cancelled, diverted and gate-closed candidates are dropped in the tool. | `no_unusable_status` passed on `same-day-no-hotel` after the D9 fix; guarded by 11 unit tests in `tests/test_tools_flights.py` |
 
 ---
 
 ## 2. What changed because of this validation
 
-**The degradation behaviour was wrong and has been reversed.**
+### 2a. A departed flight was recommended to a stranded passenger
+
+`same-day-no-hotel` supplied three candidates, two of them marked `status: Departed`.
+Across two runs on **identical data**:
+
+| Run | Behaviour |
+|---|---|
+| 1 | *"Candidate status is Departed, so it may no longer be available for rebooking"* — and correctly identified the only one still `Expected` |
+| 2 | Ignored the field entirely and **recommended a flight that had already left** |
+
+Nothing in code filtered it: `lib/tools/flights.py` passed `status` through, and `_validate`
+never looked at it. The model was the only thing standing between the passenger and an
+un-catchable flight, and it was right roughly half the time.
+
+**Fixed (D9):** non-bookable statuses are now dropped in the tool before the prompt is built.
+The same scenario re-run live afterwards produced **1 candidate, all options catchable**.
+
+The general lesson, worth repeating at the meeting: **a fact that decides whether an option is
+usable belongs in the tool; judgement belongs in the prompt.** The model is a good reasoner and
+an unreliable filter — this is the clearest evidence in the whole exercise of what these agents
+do and do not contribute.
+
+### 2b. The degradation behaviour was wrong and has been reversed
 
 The design said that when the data source fails, the agents should fall back to LLM-invented
 options labelled "illustrative", so a demo survives an exhausted quota. **That never worked.**
