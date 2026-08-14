@@ -13,6 +13,7 @@ load_dotenv()
 
 from lib import conversation
 from lib.agents import supervisor
+from lib.prompt_examples import EXAMPLES
 
 app = FastAPI()
 logger = logging.getLogger(__name__)
@@ -55,13 +56,22 @@ AGENT_INFO = {
         "next actions to take and who to take them with; and keep the conversation open "
         "afterwards, so the passenger can compare options or ask about the terms of a specific "
         "one ('does the 09:40 take my ski bag?', 'are meals included?').\n\n"
+        "What is real and what is estimated: the flights it proposes are real scheduled "
+        "departures, and the places to stay are real properties with their true distance from the "
+        "terminal. Prices, seat availability and fare conditions are not — no free source for them "
+        "exists — so every amount and every fare term it states for a flight or a room is an "
+        "estimate, labelled as one, to be confirmed with the airline or the property. The "
+        "entitlements are the exception: those are read from the regulations and the Contract of "
+        "Carriage and cited to the clause.\n\n"
         "What it CANNOT do (constraints): it never books, holds, cancels, or pays for anything — "
         "every option it returns is a recommendation the passenger acts on themselves. It has no "
         "access to the passenger's booking, airline account, loyalty status, or payment details, "
         "and asks for no credentials. It does not file compensation claims on their behalf. It is "
         "not legal advice: it reads the published rules and the airline's own contract and "
         "explains what they say, but the airline's decision on a specific case is the airline's. "
-        "Outside a travel-disruption request, it says so and does not improvise."
+        "If one part of the crew fails, it returns the rest of the plan and says plainly what is "
+        "missing rather than withholding the whole answer. Outside a travel-disruption request, "
+        "it says so and does not improvise."
     ),
     "purpose": (
         "Get a stranded passenger from 'my flight just got cancelled' to a complete, actionable "
@@ -90,11 +100,11 @@ AGENT_INFO = {
             "What you need: all of it"
         ),
     },
-    # BLOCKED until Phase 2/3: `full_response` and `steps` must be captured verbatim from a real
-    # /api/execute run. They cannot be written by hand — `steps` has to match the actual LLM calls
-    # and the module names in the architecture PNG, and a grader can diff them against a live run.
-    # Fill this in as the last integration step, not before the agents exist.
-    "prompt_examples": [],
+    # Captured verbatim from three production runs on 14/8/2026 — see lib/prompt_examples.py.
+    # They cannot be written by hand: `steps` has to match the actual LLM calls and the module
+    # names in the architecture PNG, and a grader can diff them against a live run. Re-capture
+    # them whenever a system prompt or the dispatch logic changes.
+    "prompt_examples": EXAMPLES,
 }
 
 

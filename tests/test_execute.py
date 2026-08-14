@@ -234,6 +234,36 @@ def test_agent_info_has_the_required_fields():
         assert module in body["description"]
 
 
+def test_agent_info_says_what_is_real_and_what_is_estimated():
+    # Decision D2 (9/8/2026): schedules and hotels are real, prices and fare conditions
+    # are LLM estimates, and the description is where that has to be stated.
+    description = client.get("/api/agent_info").json()["description"]
+
+    assert "estimate" in description
+    assert "real scheduled" in description
+
+
+def test_prompt_examples_are_real_traces():
+    examples = client.get("/api/agent_info").json()["prompt_examples"]
+
+    assert len(examples) >= 3
+    seen = set()
+    for example in examples:
+        assert set(example) == {"prompt", "full_response", "steps"}
+        assert example["prompt"] and example["full_response"]
+        assert example["steps"]
+        for step in example["steps"]:
+            # Same schema the live endpoint is held to, and the same module names.
+            assert set(step) == {"module", "prompt", "response"}
+            assert set(step["prompt"]) == {"system_prompt", "user_prompt"}
+            assert step["module"] in MODULES
+            assert step["prompt"]["system_prompt"] and step["prompt"]["user_prompt"]
+            seen.add(step["module"])
+
+    # An example set that never exercises an agent proves nothing about it.
+    assert seen == MODULES
+
+
 def test_model_architecture_returns_a_png():
     response = client.get("/api/model_architecture")
 
