@@ -1,8 +1,8 @@
-"""Supervisor logic that does not depend on an LLM: the refinement gate, the date
-sync, the history cap, and the partial-failure policy.
+"""Supervisor orchestration: the refinement gate, follow-up narrowing, the date sync,
+the history cap, and the partial-failure policy.
 
-FlightAgent and AccommodationAgent now make real LLM calls, so these run against
-the `fake_llm` fixture in tests/conftest.py. No API key and no Supabase are needed.
+Every LLM call in the path — the Supervisor's own two included — runs against the
+`fake_llm` fixture in tests/conftest.py. No API key and no Supabase are needed.
 """
 
 from datetime import date, datetime, timedelta
@@ -79,6 +79,34 @@ def test_documentation_agent_emits_three_steps_for_its_reflection_loop():
     # The reason the interface contract is (payload, steps) rather than one step.
     _, steps = supervisor.run(COMPLETE, [])
     assert modules_of(steps).count("DocumentationAgent") == 3
+
+
+# --- follow-up turns ------------------------------------------------------------
+
+
+def test_the_refinement_call_sees_the_earlier_turns():
+    history = [{"prompt": COMPLETE, "response": "Onward flight: LH 687, TLV to FRA."}]
+    _, steps = supervisor.run("anything earlier?", history)
+
+    assert "LH318" in steps[0]["prompt"]["user_prompt"]
+
+
+def test_a_flight_follow_up_dispatches_only_the_flight_agent():
+    history = [{"prompt": COMPLETE, "response": "Onward flight: LH 687, TLV to FRA."}]
+    _, steps = supervisor.run("anything earlier than the 04:25?", history)
+
+    # Re-dispatching the crew here costs ~7 LLM calls and 2 AeroDataBox units for a
+    # question only FlightAgent can answer.
+    assert set(modules_of(steps)) == {"Supervisor", "FlightAgent"}
+
+
+def test_a_follow_up_that_needs_nobody_is_answered_instead_of_interrogated():
+    # Details are still missing, but nothing is being dispatched, so nothing is blocked.
+    history = [{"prompt": "my flight got cancelled help", "response": "I need a couple of details"}]
+    text, steps = supervisor.run("never mind, thanks", history)
+
+    assert modules_of(steps) == ["Supervisor", "Supervisor"]  # refinement, then compose
+    assert "I need a couple of details" not in text
 
 
 # --- the date sync --------------------------------------------------------------
@@ -212,6 +240,41 @@ def test_calls_that_succeeded_before_a_failure_are_kept(monkeypatch):
     # Both the successful draft and the failed critique survive, in order.
     assert steps.index(drafted) < steps.index(critiqued)
     assert modules_of(steps).count("DocumentationAgent") == 2
+
+
+def test_a_failed_composing_call_still_hands_over_the_plan(monkeypatch):
+    from lib import llm
+    from lib.steps import make_step
+
+    crew = llm.call  # the fake, already installed by the fixture
+    failed_step = make_step("Supervisor", "compose", "user", {"error": "timed out"})
+
+    def fail_on_compose(module, system_prompt, user_prompt, **kwargs):
+        if "What the crew came back with:" in user_prompt:
+            raise llm.LLMError("Supervisor: timed out", steps=[failed_step])
+        return crew(module, system_prompt, user_prompt, **kwargs)
+
+    monkeypatch.setattr(llm, "call", fail_on_compose)
+    text, steps = supervisor.run(COMPLETE, [])
+
+    # Six calls and two external quotas are already spent by the time we compose.
+    assert "Onward flight" in text
+    assert "Somewhere to sleep" in text
+    assert failed_step in steps          # and the call that failed is still in the trace
+
+
+def test_a_half_labelled_option_still_produces_a_plan(monkeypatch):
+    """Agent validation guarantees an id and a parseable date, not a full label."""
+    from lib.agents import flight_agent
+
+    bare = {"options": [{"id": "F1", "depart": (datetime.now() + timedelta(days=1)).isoformat()}],
+            "recommended_id": "F1"}
+    monkeypatch.setattr(flight_agent, "run", lambda *a, **k: (bare, []))
+
+    text, _ = supervisor.run(COMPLETE, [])
+
+    assert "Onward flight" in text
+    assert "Could not complete: onward flights" not in text
 
 
 def test_a_failing_flight_search_skips_the_stay_rather_than_guessing_nights(monkeypatch):

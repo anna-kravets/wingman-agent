@@ -9,16 +9,16 @@ It also owns the date sync — AccommodationAgent is never asked to guess which 
 the passenger is stranded, it is told, from the departure time of the flight
 FlightAgent actually found.
 
-Two seams are stubbed until the LLMod key exists (`_extract_request` and `_compose`,
-both marked below). Everything else — dispatch, date sync, the history cap, the
-partial-failure policy — is real and covered by `tests/`.
+Follow-up turns are narrowed the same way and for the same reason: "anything earlier
+than the 04:25?" is a question only FlightAgent can answer, so only FlightAgent runs.
+Re-dispatching the whole crew would cost ~7 LLM calls and 2 AeroDataBox units for one
+line of conversation.
 """
 
-import re
 from datetime import datetime
 
+from lib import llm
 from lib.agents import accommodation_agent, documentation_agent, flight_agent
-from lib.steps import make_step
 
 MODULE = "Supervisor"
 
@@ -28,6 +28,14 @@ MODULE = "Supervisor"
 HISTORY_TURNS = 6
 
 REQUIRED_FIELDS = ("flight_number", "origin", "destination", "disruption", "stranded_at")
+
+NEEDS = ("flight", "stay", "rights")
+DISRUPTIONS = ("delayed", "cancelled", "denied_boarding")
+
+# Runaway guards, not targets: both outputs are small, but an uncapped completion on a
+# reasoning model is an uncapped charge against the $13 (`docs/PROJECT_PLAN.md` §5).
+REFINE_MAX_COMPLETION_TOKENS = 4_000
+COMPOSE_MAX_COMPLETION_TOKENS = 4_000
 
 QUESTIONS = {
     "flight_number": "Which airline and flight number was it?",
@@ -49,8 +57,24 @@ Return a JSON object only, no prose:
  "stranded_at", "party_size", "arrive_by", "needs": ["flight", "stay", "rights"],
  "missing": [field names]}
 
-"needs" defaults to all three unless the passenger clearly wants less. Ask for as little as
-possible: only fields in REQUIRED_FIELDS actually block the crew from starting.
+"stranded_at" is an airport, not a place inside one — give its IATA code where you can work it
+out. If they were stopped before leaving, repeat the same code you put in "origin"; never write
+the word "origin" itself.
+
+On a first message "needs" is ["flight", "stay", "rights"]. Leave one out only when the
+passenger rules it out in words — "I don't need a hotel", "I just want to know what I'm owed".
+Never drop one because they did not think to ask: a passenger who does not know they are owed a
+bed and a payout is the reason this exists, and a flight that leaves tomorrow means a bed
+tonight whether or not they said so. Ask for as little as possible — only "flight_number",
+"origin", "destination", "disruption" and "stranded_at" block the crew from starting.
+
+If earlier turns are shown, this is a follow-up. Carry forward every field the passenger
+already gave — they will not repeat themselves — and set "needs" to only what this message
+actually asks for: a question about times, seats or other departures is ["flight"], one about
+where they sleep is ["stay"], one about baggage, meals, money or what the airline owes is
+["rights"]. Return an empty "needs" when the question can be answered from what is already on
+the table. Re-running the whole crew for a one-line question costs the passenger time and
+costs the project money.
 """
 
 COMPOSE_SYSTEM_PROMPT = """You write the passenger's recovery plan from the results the crew returned.
@@ -107,74 +131,132 @@ def _stay_window(request: dict, flight_payload: dict | None) -> dict | None:
     }
 
 
+def _history_block(history: list[dict]) -> list[str]:
+    if not history:
+        return []
+    lines = ["Earlier in this conversation:"]
+    for turn in history:
+        lines.append(f"  passenger: {turn['prompt']}")
+        lines.append(f"  you: {turn['response']}")
+    return lines
+
+
+def _refine_prompt(prompt: str, history: list[dict]) -> str:
+    lines = _history_block(history)
+    if lines:
+        lines.append("")
+    lines.append(f"Passenger's message: {prompt.strip()}")
+    return "\n".join(lines)
+
+
+def _text(value) -> str | None:
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _party_size(value) -> int:
+    try:
+        size = int(value)
+    except (TypeError, ValueError):
+        return 1
+    return size if size > 0 else 1
+
+
+def _request_from(parsed: dict, follow_up: bool) -> dict:
+    """The model's JSON forced into the locked request shape (`docs/PROJECT_PLAN.md` §1).
+
+    Everything the rest of the system indexes into is set here whatever came back: a
+    missing "local_now" crashes the date sync, and an invented "needs" entry would
+    dispatch an agent that does not exist.
+    """
+    request = {
+        field: _text(parsed.get(field))
+        for field in (
+            "airline", "flight_number", "origin", "destination", "stranded_at", "arrive_by"
+        )
+    }
+    disruption = _text(parsed.get("disruption"))
+    request["disruption"] = disruption if disruption in DISRUPTIONS else None
+    request["party_size"] = _party_size(parsed.get("party_size"))
+
+    asked = parsed.get("needs")
+    needs = [n for n in NEEDS if n in asked] if isinstance(asked, list) else []
+    # A first turn is a whole disruption to sort out, so an unreadable "needs" falls back
+    # to all three. A follow-up that needs nobody is answered from the conversation —
+    # the cheapest turn in the system, and the common case once a plan exists.
+    request["needs"] = needs if (needs or follow_up) else list(NEEDS)
+
+    # The model has no clock, and the date sync runs on this.
+    request["local_now"] = datetime.now().isoformat(timespec="seconds")
+    request["missing"] = [f for f in REQUIRED_FIELDS if not request.get(f)]
+    return request
+
+
 def _extract_request(prompt: str, history: list[dict]) -> tuple[dict, dict]:
     """Question refinement: message -> (request, step).
 
-    STUB. Person A replaces the body with a single lib.llm.call(REFINE_SYSTEM_PROMPT,
-    ..., expect_json=True); the prompt above is already what it should send. The crude
-    parsing here exists only so both branches of the gate are testable without a key.
+    History goes into the call so a follow-up inherits what the passenger already
+    said, and so `needs` can narrow to the one agent the follow-up actually needs.
     """
-    text = prompt.strip()
-    lowered = text.lower()
-
-    disruption = None
-    if "denied boarding" in lowered or "bumped" in lowered:
-        disruption = "denied_boarding"
-    elif "cancel" in lowered:
-        disruption = "cancelled"
-    elif "delay" in lowered:
-        disruption = "delayed"
-
-    flight = re.search(r"\b([A-Z]{2})\s?(\d{2,4})\b", text)
-    route = re.search(r"\b([A-Z]{3})\s*(?:->|→|to)\s*([A-Z]{3})\b", text)
-
-    request = {
-        "airline": flight.group(1) if flight else None,
-        "flight_number": flight.group(0).replace(" ", "") if flight else None,
-        "origin": route.group(1) if route else None,
-        "destination": route.group(2) if route else None,
-        "disruption": disruption,
-        "stranded_at": route.group(1) if route else None,
-        "party_size": 1,
-        "arrive_by": None,
-        "needs": ["flight", "stay", "rights"],
-        "local_now": datetime.now().isoformat(timespec="seconds"),
-    }
-    request["missing"] = [f for f in REQUIRED_FIELDS if not request.get(f)]
-
-    step = make_step(MODULE, REFINE_SYSTEM_PROMPT, prompt, request)
-    return request, step
+    parsed, step = llm.call(
+        MODULE,
+        REFINE_SYSTEM_PROMPT,
+        _refine_prompt(prompt, history),
+        expect_json=True,
+        max_completion_tokens=REFINE_MAX_COMPLETION_TOKENS,
+    )
+    if not isinstance(parsed, dict):
+        raise llm.LLMError(
+            f"{MODULE}: the refinement pass returned {type(parsed).__name__}, not an object",
+            steps=[step],
+        )
+    return _request_from(parsed, bool(history)), step
 
 
-def _compose(request: dict, results: dict, failures: list[str], history: list[dict]) -> tuple[str, dict]:
-    """Results -> the passenger's plan, as text. Returns (text, step).
+def _line(label: str, *parts: str) -> str:
+    """One digest line, built only from the fields that actually came back."""
+    return f"{label}: " + ", ".join(part for part in parts if part) + "."
 
-    STUB. Person A replaces the body with a single lib.llm.call(COMPOSE_SYSTEM_PROMPT, ...).
-    The deterministic assembly below keeps the endpoint useful in the meantime.
+
+def _digest(results: dict, failures: list[str]) -> str:
+    """What the crew came back with, as flat lines.
+
+    Both the composing call's input and — if that call is the one that fails — the
+    plan the passenger gets instead. Nothing here is indexed with []: the agents'
+    validation guarantees an id and a parseable date, not a label, and a model that
+    left "area" out must not cost the passenger a plan that six calls already paid for.
     """
     lines = []
 
     flight = _recommended(results.get("flight") or {})
     if flight:
-        lines.append(
-            f"Onward flight: {flight['airline']} {flight['flight_number']}, "
-            f"{flight['origin']} to {flight['destination']}, departs {flight['depart']}."
-        )
+        lines.append(_line(
+            "Onward flight",
+            f"{flight.get('airline') or ''} {flight.get('flight_number') or ''}".strip(),
+            " to ".join(p for p in (flight.get("origin"), flight.get("destination")) if p),
+            f"departs {flight['depart']}" if flight.get("depart") else "",
+        ))
 
     stay = _recommended(results.get("stay") or {})
     if stay:
-        meals = "meals included" if stay.get("meals_included") else "no meals"
-        lines.append(
-            f"Somewhere to sleep: {stay['name']}, {stay['area']}, "
-            f"{stay['check_in']} to {stay['check_out']} ({stay['nights']} night(s), {meals})."
-        )
+        lines.append(_line(
+            "Somewhere to sleep",
+            stay.get("name") or "",
+            stay.get("area") or "",
+            " to ".join(p for p in (stay.get("check_in"), stay.get("check_out")) if p),
+            f"{stay['nights']} night(s)" if stay.get("nights") else "",
+            "meals included" if stay.get("meals_included") else "no meals",
+        ))
 
     rights = results.get("rights")
     if rights:
         lines.append(f"What you are owed (under {rights.get('regulation')}):")
-        for item in rights.get("entitlements", []):
-            lines.append(f"  - {item['kind']}: {item['summary']} [{item['source']}]")
-        for action in rights.get("next_actions", []):
+        for item in rights.get("entitlements") or []:
+            source = item.get("source")
+            lines.append(
+                f"  - {item.get('kind')}: {item.get('summary')}"
+                + (f" [{source}]" if source else "")
+            )
+        for action in rights.get("next_actions") or []:
             lines.append(f"  Next: {action}")
 
     for failure in failures:
@@ -183,8 +265,43 @@ def _compose(request: dict, results: dict, failures: list[str], history: list[di
     lines.append("")
     lines.append("Ask me to compare any of these, or about the terms of one in particular.")
 
-    text = "\n".join(lines)
-    return text, make_step(MODULE, COMPOSE_SYSTEM_PROMPT, str(results), {"text": text})
+    return "\n".join(lines)
+
+
+def _compose_prompt(request: dict, digest: str, history: list[dict]) -> str:
+    lines = [
+        f"Flight: {request.get('airline')} {request.get('flight_number')}",
+        f"Route: {request.get('origin')} -> {request.get('destination')}",
+        f"What happened: {request.get('disruption')}",
+        f"Party size: {request.get('party_size')}",
+        f"Local time now: {request.get('local_now')}",
+        "",
+        f"They just said: {request.get('_passenger_prompt')}",
+    ]
+    block = _history_block(history)
+    if block:
+        lines += [""] + block
+    lines += ["", "What the crew came back with:", digest]
+    return "\n".join(lines)
+
+
+def _compose(
+    request: dict, results: dict, failures: list[str], history: list[dict]
+) -> tuple[str, list[dict]]:
+    """Results -> the passenger's plan, as text. Returns (text, steps)."""
+    digest = _digest(results, failures)
+    try:
+        text, step = llm.call(
+            MODULE,
+            COMPOSE_SYSTEM_PROMPT,
+            _compose_prompt(request, digest, history),
+            max_completion_tokens=COMPOSE_MAX_COMPLETION_TOKENS,
+        )
+    except llm.LLMError as exc:
+        # Up to six calls and two API quotas are already spent by the time we compose.
+        # Losing all of it to the last call is worse than handing over the flat version.
+        return digest, exc.steps
+    return (text or "").strip() or digest, [step]
 
 
 def run(prompt: str, history: list[dict]) -> tuple[str, list[dict]]:
@@ -199,15 +316,18 @@ def run(prompt: str, history: list[dict]) -> tuple[str, list[dict]]:
     request["_passenger_prompt"] = prompt.strip()
     steps.append(refine_step)
 
+    needs = request["needs"]
+
     # The gate: never dispatch a crew against a request that is missing what it needs.
-    if request["missing"]:
+    # Nothing to dispatch means nothing is blocked, so a follow-up answered from the
+    # conversation is never interrogated for details it already gave.
+    if request["missing"] and needs:
         asked = list(dict.fromkeys(QUESTIONS[f] for f in request["missing"]))
         text = "Before I can help, I need a couple of details:\n" + "\n".join(
             f"  - {q}" for q in asked
         )
         return text, steps
 
-    needs = request.get("needs") or []
     results: dict = {}
     failures: list[str] = []
 
@@ -243,6 +363,6 @@ def run(prompt: str, history: list[dict]) -> tuple[str, list[dict]]:
     if "rights" in needs:
         dispatch("your entitlements", "rights", documentation_agent.run, request)
 
-    text, compose_step = _compose(request, results, failures, history)
-    steps.append(compose_step)
+    text, compose_steps = _compose(request, results, failures, history)
+    steps.extend(compose_steps)
     return text, steps
