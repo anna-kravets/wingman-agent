@@ -132,7 +132,7 @@ output — cite the clause, not just the regulation.
 - [x] `POST /api/execute` stub — real response shape, empty `steps`, wired to a `Supervisor` stub, accepts optional `conversation_id` for multi-turn
 - [x] GUI shell — modern chat, response/steps display and confirmed deletion, no auth (`conversation_id` generated client-side; an HTTP-only anonymous-device cookie scopes server history and restores the device's conversation list)
 - [x] Shared step-logger utility so all agents log consistently (`lib/steps.py`)
-- [~] Supabase table for owner-scoped conversation history (`owner_id`, `conversation_id`, title, turn history, timestamps) — fresh schema and upgrade migration written; actual Supabase project remains untested end-to-end
+- [x] Supabase table for owner-scoped conversation history (`owner_id`, `conversation_id`, title, turn history, timestamps) — migration applied to the production Supabase project 14/8/2026 (schema, primary key, RLS verified per `docs/SUPABASE_HANDOFF_ANNA.md`); prod smoke test (`GET`/`GET`/`DELETE` on `/api/conversations`) confirmed real reads/writes against Supabase, not the best-effort no-op path
 
 ### Phase 2 — Agent builds, parallel (day 4–10)
 
@@ -151,13 +151,13 @@ the suite can never spend API quota.
 **Updated 11/8/2026:** `DocumentationAgent` is built too now (grounded retrieval + one reflection
 round, see the Phase 2 checklist below) — no agent is stubbed anymore.
 
-**Note for Person A:** without an `LLMOD_API_KEY`, `/api/execute`'s trace now contains no
-`FlightAgent` or `AccommodationAgent` steps — those agents fail through the partial-failure path
-instead of returning stub fiction. `tests/test_execute.py` still passes, because it validates the
-steps that are present rather than asserting all four modules appear. That gap closes by itself
-the day the key lands.
+**Updated 14/8/2026:** the Supervisor's own two calls are real as well, so `/api/execute` now
+needs an `LLMOD_API_KEY` to answer at all — the refinement pass is the first thing that runs, and
+without a key it fails before any agent is dispatched. `tests/test_execute.py` and
+`tests/test_supervisor.py` both run against the `fake_llm` fixture in `tests/conftest.py`, which
+is what keeps the suite keyless and free.
 
-- [~] **Supervisor:** dispatch, date-sync, history cap and partial-failure policy built and tested. Two seams still stubbed pending the LLMod key: `_extract_request` (question refinement) and `_compose` (writing the plan) — both already carry the prompt they should send.
+- [x] **Supervisor:** dispatch, date-sync, history cap and partial-failure policy built and tested. `_extract_request` (question refinement) and `_compose` (writing the plan) are real `lib.llm.call` calls as of 14/8/2026 — no stubbed code is left in the repo. Follow-up turns narrow `needs` so a one-line question dispatches one agent, not three (§6).
   - [x] **History cap decided** (see §7): last `HISTORY_TURNS = 6` turns, trimmed in the Supervisor.
   - [x] **Partial-failure policy:** one sub-agent raising must not lose the rest of the plan; the passenger is told what is missing. A failed flight search skips accommodation rather than guessing the nights.
 - [x] **FlightAgent:** real departures from AeroDataBox, filtered to the route and trimmed in `lib/tools/flights.py` (118KB/188 departures → ~630 bytes); role+one-shot prompt now selects from verified candidates. Scope narrowed: baggage/fare/entitlement questions defer to `DocumentationAgent` (§6).
@@ -167,14 +167,14 @@ the day the key lands.
 - [x] **DocumentationAgent evaluation:** two frozen regression cases plus seven held-out cases spanning cancellation, denied boarding, tarmac delay, mixed jurisdictions, route direction, and exception facts. Reflection audits enumerate rule branches and conditions; a no-cost artifact checker validates structure and leaves semantic expected/forbidden findings for human review.
 
 ### Phase 3 — Integration (day 10–13)
-- [~] Supervisor calls all 3 sub-agents, aggregates response, produces full end-to-end `steps` trace — working against the stubs and covered by `tests/`. Re-verify as each real agent lands.
+- [x] Supervisor calls all 3 sub-agents, aggregates response, produces full end-to-end `steps` trace — covered by `tests/` and verified live on 14/8/2026: a first turn ran `Supervisor · FlightAgent · DocumentationAgent ×3 · Supervisor` in ~50s, and a flight follow-up on the same conversation ran `Supervisor · FlightAgent · Supervisor`.
 - [x] **LLMod.ai endpoint verified with live tests.** Chat and embedding requests use direct `httpx` clients configured only through `LLMOD_API_KEY` and `LLMOD_API_BASE`.
 - [~] `GET /api/agent_info` — route live; `description`, `purpose` and `prompt_template` written (they describe the product, not the code). **Still blocked:**
   - [ ] `prompt_examples[]` — currently `[]`. `full_response` and `steps` must be captured verbatim from a real `/api/execute` run: `steps` has to match the actual LLM calls and the module names in the architecture PNG, and a grader can diff them against a live run. Fill in as the last integration step.
   - [ ] Revisit the `description` now the data source is decided (§6). It says Wingman *proposes* options and books nothing, which is still true. It must additionally state that **flight schedules and hotels are real, while prices and fare conditions are estimates** — no free source of fares or seat availability exists.
 - [x] `GET /api/model_architecture` — PNG served with `Content-Type: image/png`, `includeFiles` set in `vercel.json` so it ships in the function bundle; verified in prod. Diagram labels match the locked module names.
 - [x] Error path: `{ "status": "error", "error": "...", "response": null, "steps": [] }` — input validated before dispatch, unexpected failures wrapped in a readable sentence; verified in prod.
-- [~] Multi-turn end-to-end: GUI sends `conversation_id`; an HTTP-only anonymous-device cookie scopes list/load/save/delete operations; the route passes owned history to `supervisor.run(prompt, history)`. Plumbing and ownership behavior are tested against a fake store; **untested against real Supabase** until the migration is applied. Persistence still no-ops when Supabase is absent.
+- [~] Multi-turn end-to-end: GUI sends `conversation_id`; an HTTP-only anonymous-device cookie scopes list/load/save/delete operations; the route passes owned history to `supervisor.run(prompt, history)`. Plumbing and ownership behavior are tested against a fake store; **the production Supabase connection itself is now verified** (migration applied 14/8/2026, `/api/conversations` list/delete confirmed live in prod). Still open: a real multi-turn conversation (3 turns, one `conversation_id`, through the GUI) hasn't been run against prod yet — tracked as a separate P2 item. Persistence still no-ops when Supabase is absent.
 - [ ] Budget check: log $ per call, confirm total dev+test spend stays well under $13. Cap the reflection loop to one critique pass — Supervisor + FlightAgent + AccommodationAgent + DocumentationAgent(draft+critique+refine) is already ~5–7 LLM calls per user turn.
 
 ### Phase 4 — Test + submit (day 13–16, includes buffer)
@@ -272,6 +272,9 @@ the abstract. Raise these at the first integration checkpoint and log whatever i
 | 9/8/2026 | `FlightAgent` **defers baggage/fare/entitlement questions to `DocumentationAgent`** | Schedule data cannot answer what a ticket allows; the Contract of Carriage can, and with a clause citation — which is the project's differentiator. Corrects Phase 3's "ski bag" example and `CLAUDE.md` §3's "check terms", both of which asked FlightAgent for something it has no source for. |
 | 9/8/2026 | Data-source failure **degrades to LLM-only, labelled in `notes`** | The demo must survive an exhausted quota or a flaky Overpass during grading (the public instance returned a 504 during development). Mirrors `lib/conversation.py`'s posture on Supabase. |
 | 9/8/2026 | Airport coordinates ship as a generated **Python module**, not JSON | Vercel's Python builder traces imports, not data files. A `.json` would need a `vercel.json` `includeFiles` change and would fail *only in production*, silently, if the glob were wrong. |
+| 14/8/2026 | The Supervisor **narrows `needs` on follow-up turns** — "anything earlier than the 04:25?" dispatches `FlightAgent` alone | Person B's design doc D6, assigned to Person A. Re-dispatching the crew for a one-line question costs ~7 LLM calls and 2 AeroDataBox units out of a 600-unit month and a $13 project. The narrowing lives in `REFINE_SYSTEM_PROMPT`, not in keyword matching: the model already reads the message, and a keyword list would be the same crude parsing the stub apologised for. A follow-up answerable from the conversation returns an empty `needs` and dispatches nobody — so the refinement gate now only fires when there is actually a crew to block. |
+| 14/8/2026 | A failed **composing** call falls back to the flat digest of the crew's results rather than erroring the turn | By the time we compose, up to six LLM calls and two external quotas are already spent. Losing the whole plan to the last call is worse than handing the passenger a mechanical version of it, and it matches the partial-failure policy already applied to the sub-agents. The failed call still reaches `steps[]` on the exception, so the trace stays honest. |
+| 14/8/2026 | Production Supabase migration applied and verified live (`docs/SUPABASE_HANDOFF_ANNA.md`); `/api/conversations` list/delete confirmed hitting real Supabase, not the best-effort no-op path | Closes the last item in §1 Phase 1 / Phase 3's multi-turn checklist that was blocked on a real Supabase project. Found and fixed along the way: production `SUPABASE_URL` was set to the Supabase **dashboard page URL** (`https://supabase.com/dashboard/project/<ref>`) instead of the **API host** (`https://<ref>.supabase.co`), so every request 404'd and surfaced as the generic `"temporarily unavailable"`/`"could not be deleted"` 503s. If conversation history ever silently stops persisting again in prod, check that env var first before suspecting RLS or the service-role key. |
 
 ---
 
