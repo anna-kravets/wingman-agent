@@ -233,9 +233,45 @@ def test_trace_shape_fails_on_an_unknown_module():
     assert status_of(results, "trace_shape") == "fail"
 
 
+def same_day_prompt(now="2026-08-11T05:00:00"):
+    return f"Route: TLV -> FRA\nLocal time now: {now}\n\n" + (
+        "Candidates (real, verified departures - choose only from these):\n"
+        + json.dumps(FLIGHT_CANDIDATES))
+
+
 def test_no_accommodation_passes_when_the_stay_was_skipped():
-    results = evaluate(artifact_with([GOOD_FLIGHT], None), case_with("no_accommodation"))
+    # GOOD_FLIGHT departs 2026-08-11, and local_now is the same day.
+    art = artifact_with([GOOD_FLIGHT], None, flight_prompt_text=same_day_prompt())
+    results = evaluate(art, case_with("no_accommodation"))
     assert status_of(results, "no_accommodation") == "pass"
+
+
+def test_no_accommodation_fails_when_a_stay_ran_on_a_same_day_flight():
+    art = artifact_with([GOOD_FLIGHT], [GOOD_HOTEL], flight_prompt_text=same_day_prompt())
+    results = evaluate(art, case_with("no_accommodation"))
+    assert status_of(results, "no_accommodation") == "fail"
+
+
+def test_no_accommodation_skips_when_the_flight_is_not_today():
+    # A live run failed this check because every same-day departure had genuinely
+    # gone and been filtered out: the premise, not the agent, was wrong.
+    art = artifact_with([GOOD_FLIGHT], [GOOD_HOTEL],
+                        flight_prompt_text=same_day_prompt(now="2026-08-10T05:00:00"))
+    results = evaluate(art, case_with("no_accommodation"))
+    assert status_of(results, "no_accommodation") == "skip"
+
+
+def test_a_hotels_own_website_is_not_a_booking_site():
+    # radissonhotels.com contains "hotels.com" and is not a violation.
+    legit = dict(GOOD_HOTEL, notes="See https://www.radissonhotels.com/heathrow")
+    results = evaluate(artifact_with([GOOD_FLIGHT], [legit]), case_with("no_booking_site"))
+    assert status_of(results, "no_booking_site") == "pass"
+
+
+def test_a_real_booking_site_is_still_caught():
+    leaky = dict(GOOD_HOTEL, notes="Cheaper on www.hotels.com tonight")
+    results = evaluate(artifact_with([GOOD_FLIGHT], [leaky]), case_with("no_booking_site"))
+    assert status_of(results, "no_booking_site") == "fail"
 
 
 def test_history_reached_agents_checks_every_agent_prompt():

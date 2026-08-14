@@ -151,15 +151,43 @@ def _check_date_sync(artifact, case):
 
 
 def _check_no_accommodation(artifact, case):
+    """A stay must be skipped only when the flight really does leave the same day.
+
+    The premise is not ours to guarantee: whether a same-day departure still
+    exists depends on the wall clock. Asserting it unconditionally failed a run
+    where every same-day flight had genuinely departed and been filtered out.
+    """
+    flight_step = _step(artifact, "FlightAgent")
+    if not flight_step:
+        return _result("no_accommodation", True, "no flight was found", skip=True)
+
+    now = re.search(r"^Local time now:\s*(\S+)", flight_step["prompt"]["user_prompt"], re.M)
+    options = _options(flight_step)
+    wanted = flight_step["response"].get("recommended_id") if isinstance(
+        flight_step.get("response"), dict) else None
+    chosen = next((o for o in options if o.get("id") == wanted), options[0] if options else None)
+    if not (now and chosen and chosen.get("depart")):
+        return _result("no_accommodation", True, "cannot tell which day the flight leaves",
+                       skip=True)
+
+    if chosen["depart"][:10] != now.group(1)[:10]:
+        return _result("no_accommodation", True,
+                       f"premise not met: earliest flight is {chosen['depart'][:10]}, "
+                       f"not {now.group(1)[:10]}", skip=True)
+
     step = _step(artifact, "AccommodationAgent")
     return _result("no_accommodation", step is None,
-                   "AccommodationAgent ran when no stay was needed" if step else "correctly skipped")
+                   "AccommodationAgent ran when the flight leaves today" if step
+                   else "correctly skipped")
 
 
 def _check_no_booking_site(artifact, case):
     haystack = json.dumps(artifact.get("steps", []), ensure_ascii=False).lower()
     haystack += str(artifact.get("response", "")).lower()
-    named = [site for site in BOOKING_SITES if site in haystack]
+    # Domain boundary, or "hotels.com" matches inside radissonhotels.com - a real
+    # hotel's own website, which a live run flagged as a violation it was not.
+    named = [site for site in BOOKING_SITES
+             if re.search(rf"(?<![a-z0-9-]){re.escape(site)}", haystack)]
     return _result("no_booking_site", not named, f"named: {named}" if named else "none named")
 
 

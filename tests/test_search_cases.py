@@ -7,9 +7,9 @@ import pytest
 from evals.search_cases import CHECK_NAMES, load_search_cases
 
 
-def test_loads_all_twelve_scenarios():
+def test_loads_every_scenario():
     cases = load_search_cases()
-    assert len(cases) == 12
+    assert len(cases) == 16
 
 
 def test_every_case_declares_what_it_probes():

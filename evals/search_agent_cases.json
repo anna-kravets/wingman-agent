@@ -140,6 +140,65 @@
       "expect": {}
     },
     {
+      "case_id": "unknown-airport",
+      "title": "An airport code that is not in the table (VDA, closed)",
+      "probes": ["malformed_geography", "graceful_failure"],
+      "prompt": "LY123 VDA -> TLV was cancelled",
+      "history": [],
+      "request_override": {"party_size": 1, "stranded_at": "VDA"},
+      "local_now": {"offset_days": 0, "time": "22:15"},
+      "live_data": true,
+      "checks": ["trace_shape", "degraded_refusal"],
+      "expect": {}
+    },
+    {
+      "case_id": "same-origin-destination",
+      "title": "Origin equals destination - a route that cannot exist",
+      "probes": ["malformed_geography", "wasted_quota"],
+      "prompt": "LY001 TLV -> TLV was cancelled",
+      "history": [],
+      "request_override": {"party_size": 1, "origin": "TLV", "destination": "TLV"},
+      "local_now": {"offset_days": 0, "time": "10:00"},
+      "live_data": true,
+      "checks": ["trace_shape", "degraded_refusal"],
+      "expect": {}
+    },
+    {
+      "case_id": "mega-hub",
+      "title": "A high-frequency route returning many candidates",
+      "probes": ["scale", "prompt_size"],
+      "prompt": "BA430 LHR -> AMS was cancelled",
+      "history": [],
+      "request_override": {"party_size": 1},
+      "local_now": {"offset_days": 0, "time": "08:00"},
+      "live_data": true,
+      "checks": ["trace_shape", "grounding_flights", "no_unusable_status", "no_booking_site"],
+      "expect": {}
+    },
+    {
+      "case_id": "long-history",
+      "title": "A conversation past the six-turn history cap",
+      "probes": ["scale", "history_cap"],
+      "prompt": "which of those is closest to the terminal?",
+      "history": [
+        {"prompt": "LH318 TLV -> FRA was cancelled at the gate", "response": "Onward flight: LH 687."},
+        {"prompt": "anything earlier?", "response": "Condor DE 4308 departs 05:15."},
+        {"prompt": "what aircraft is that?", "response": "An Airbus A320."},
+        {"prompt": "which terminal?", "response": "Terminal 3."},
+        {"prompt": "how long is the flight?", "response": "About three and a half hours."},
+        {"prompt": "do I need a hotel?", "response": "Yes, one night."},
+        {"prompt": "what are my options?", "response": "Two places near the terminal."},
+        {"prompt": "are they expensive?", "response": "Both are estimates, not quoted prices."},
+        {"prompt": "can I get a refund instead?", "response": "That depends on your Contract of Carriage."},
+        {"prompt": "ok show me the hotels again", "response": "Airport Plaza and City Central Inn."}
+      ],
+      "request_override": {"party_size": 2, "airline": "LH", "flight_number": "LH318", "origin": "TLV", "destination": "FRA", "stranded_at": "TLV", "disruption": "cancelled"},
+      "local_now": {"offset_days": 0, "time": "23:40"},
+      "live_data": true,
+      "checks": ["trace_shape", "grounding_flights", "no_unusable_status", "history_reached_agents"],
+      "expect": {}
+    },
+    {
       "case_id": "compare-options",
       "title": "Asks to compare two options",
       "probes": ["multi_turn"],
