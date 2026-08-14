@@ -200,16 +200,22 @@ Recorded honestly rather than papered over — real schedules change daily.
    `prompt`, `full_response`, `steps`).
 2. **Its `description` does not say prices are estimates**, which the 9/8 data-source decision
    requires.
-3. **These two are blocked behind the Supervisor's stubs.** `_extract_request` and `_compose`
-   emit `steps[]` entries without making any LLM call, so `/api/execute` currently reports two
-   `Supervisor` steps backed by nothing. Capturing `prompt_examples[]` today would bake that
-   fiction into a graded artifact. **Person A's stubs are the critical path to the last graded
-   deliverable.**
+3. ~~These two are blocked behind the Supervisor's stubs.~~ **Unblocked 14/8/2026** — the seams
+   now make real LLM calls, so a captured trace would be honest. `prompt_examples[]` can be filled
+   from a real run whenever Person A is ready (an `agent/prompt-examples` branch is in flight).
 
-**Requests:**
+**Still worth raising:**
 
-4. **Narrow `needs` on follow-up turns.** A question like "can I take my ski bag on it?"
-   currently re-dispatches FlightAgent and spends API units re-searching a route the passenger
-   did not ask about.
+4. ~~Narrow `needs` on follow-up turns~~ — **done by Person A.** A flight-only follow-up now
+   dispatches only `FlightAgent` instead of the whole crew.
 5. **DocumentationAgent must actually answer carriage questions**, because FlightAgent now
    refuses them by design. The deferral is only as good as what it defers to.
+6. **The test suite was not hermetic.** `api/index.py` calls `load_dotenv()` at import, so `pytest`
+   inherited whatever `.env` was on disk — a green suite went red the moment a real Supabase
+   project appeared in one, with no test having changed. The root `conftest.py` now clears every
+   credential. Worth knowing because it means a passing suite on your machine did not previously
+   guarantee a passing suite on anyone else's.
+7. **The committed `docs/schema.sql` and the live Supabase table disagreed** at one point:
+   writing a conversation failed on a `NOT NULL owner_id` the schema file did not declare. Person
+   A's `supabase/migrations/202608120001_anonymous_conversation_owners.sql` is presumably the
+   source of truth now — worth confirming the two are reconciled before submission.
