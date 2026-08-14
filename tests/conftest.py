@@ -5,6 +5,7 @@ must see the real thing. Person C will want this too when DocumentationAgent
 stops being a stub.
 """
 
+import re
 from datetime import datetime, timedelta
 
 import pytest
@@ -50,7 +51,76 @@ def _accommodation_response(user_prompt: str) -> dict:
     }
 
 
+# What a follow-up question is about, as far as the fake is concerned. The real model
+# is told to work this out from the message (supervisor.REFINE_SYSTEM_PROMPT); the fake
+# keyword-matches so the narrowing is testable without a key.
+FOLLOW_UP_WORDS = {
+    "flight": ("flight", "earlier", "later", "depart", "seat", "connection"),
+    "stay": ("hotel", "sleep", "room", "bed"),
+    "rights": ("owed", "compensation", "rights", "claim", "baggage", "meal", "refund"),
+}
+
+
+def _disruption_in(text: str) -> str | None:
+    if "denied boarding" in text or "bumped" in text:
+        return "denied_boarding"
+    if "cancel" in text:
+        return "cancelled"
+    if "delay" in text:
+        return "delayed"
+    return None
+
+
+def _refine_response(user_prompt: str) -> dict:
+    """Stand-in for the Supervisor's question-refinement call.
+
+    Extracts from the whole prompt, earlier turns included, so a follow-up inherits
+    the details the passenger gave once — which is what the real prompt asks for.
+    """
+    message = user_prompt.rpartition("Passenger's message:")[2].strip().lower()
+    disruption = _disruption_in(user_prompt.lower())
+    # A message that reports a disruption is a fresh request even mid-conversation;
+    # only a question about a plan already on the table narrows the crew.
+    follow_up = "Earlier in this conversation:" in user_prompt and not _disruption_in(message)
+
+    flight = re.search(r"\b([A-Z]{2})\s?(\d{2,4})\b", user_prompt)
+    route = re.search(r"\b([A-Z]{3})\s*(?:->|→|to)\s*([A-Z]{3})\b", user_prompt)
+
+    needs = list(FOLLOW_UP_WORDS)
+    if follow_up:
+        needs = [
+            need for need, words in FOLLOW_UP_WORDS.items()
+            if any(word in message for word in words)
+        ]
+
+    return {
+        "airline": flight.group(1) if flight else None,
+        "flight_number": flight.group(0).replace(" ", "") if flight else None,
+        "origin": route.group(1) if route else None,
+        "destination": route.group(2) if route else None,
+        "disruption": disruption,
+        "stranded_at": route.group(1) if route else None,
+        "party_size": 1,
+        "arrive_by": None,
+        "needs": needs,
+    }
+
+
+def _compose_response(user_prompt: str) -> str:
+    """The fake composer hands the crew's results straight back. The real model rewrites
+    them as prose for one tired person; the tests assert on the facts, not the prose."""
+    return user_prompt.rpartition("What the crew came back with:")[2].strip()
+
+
+def _supervisor_response(user_prompt: str):
+    """Both Supervisor calls arrive here: the composing one is the one carrying results."""
+    if "What the crew came back with:" in user_prompt:
+        return _compose_response(user_prompt)
+    return _refine_response(user_prompt)
+
+
 RESPONSES = {
+    "Supervisor": _supervisor_response,
     "FlightAgent": _flight_response,
     "AccommodationAgent": _accommodation_response,
 }
@@ -58,9 +128,12 @@ RESPONSES = {
 
 @pytest.fixture
 def fake_llm(monkeypatch):
-    def call(module, system_prompt, user_prompt, *, expect_json=False):
+    def call(module, system_prompt, user_prompt, *, expect_json=False,
+             max_completion_tokens=None):
         payload = RESPONSES[module](user_prompt)
-        return payload, make_step(module, system_prompt, user_prompt, payload)
+        # Mirror lib.llm.call: a text call's step wraps the string, a JSON one does not.
+        response = payload if expect_json else {"text": payload}
+        return payload, make_step(module, system_prompt, user_prompt, response)
 
     monkeypatch.setattr(llm, "call", call)
     return call

@@ -1,7 +1,8 @@
 """The graded surface: the four endpoints and the exact shapes the spec locks down.
 
-Runs with no API key and no Supabase — conversation state is best-effort, so the
-endpoint answers as a single turn when the env vars are absent.
+Runs with no API key and no Supabase — LLM calls go through the `fake_llm` fixture,
+and conversation state is best-effort, so the endpoint answers as a single turn when
+the env vars are absent.
 """
 
 import pytest
@@ -13,6 +14,11 @@ from lib.agents import documentation_agent, supervisor
 from lib.steps import make_step
 
 client = TestClient(app)
+
+# The Supervisor's own refinement pass is a real LLM call now, so this file needs the
+# fake as much as test_supervisor.py does: without it these tests either fail with no
+# key configured, or spend real money with one.
+pytestmark = pytest.mark.usefixtures("fake_llm")
 
 COMPLETE = "LH318 TLV -> FRA was cancelled at the gate"
 

@@ -1,8 +1,8 @@
-"""Supervisor logic that does not depend on an LLM: the refinement gate, the date
-sync, the history cap, and the partial-failure policy.
+"""Supervisor orchestration: the refinement gate, follow-up narrowing, the date sync,
+the history cap, and the partial-failure policy.
 
-FlightAgent and AccommodationAgent now make real LLM calls, so these run against
-the `fake_llm` fixture in tests/conftest.py. No API key and no Supabase are needed.
+Every LLM call in the path — the Supervisor's own two included — runs against the
+`fake_llm` fixture in tests/conftest.py. No API key and no Supabase are needed.
 """
 
 from datetime import date, datetime, timedelta
@@ -79,6 +79,34 @@ def test_documentation_agent_emits_three_steps_for_its_reflection_loop():
     # The reason the interface contract is (payload, steps) rather than one step.
     _, steps = supervisor.run(COMPLETE, [])
     assert modules_of(steps).count("DocumentationAgent") == 3
+
+
+# --- follow-up turns ------------------------------------------------------------
+
+
+def test_the_refinement_call_sees_the_earlier_turns():
+    history = [{"prompt": COMPLETE, "response": "Onward flight: LH 687, TLV to FRA."}]
+    _, steps = supervisor.run("anything earlier?", history)
+
+    assert "LH318" in steps[0]["prompt"]["user_prompt"]
+
+
+def test_a_flight_follow_up_dispatches_only_the_flight_agent():
+    history = [{"prompt": COMPLETE, "response": "Onward flight: LH 687, TLV to FRA."}]
+    _, steps = supervisor.run("anything earlier than the 04:25?", history)
+
+    # Re-dispatching the crew here costs ~7 LLM calls and 2 AeroDataBox units for a
+    # question only FlightAgent can answer.
+    assert set(modules_of(steps)) == {"Supervisor", "FlightAgent"}
+
+
+def test_a_follow_up_that_needs_nobody_is_answered_instead_of_interrogated():
+    # Details are still missing, but nothing is being dispatched, so nothing is blocked.
+    history = [{"prompt": "my flight got cancelled help", "response": "I need a couple of details"}]
+    text, steps = supervisor.run("never mind, thanks", history)
+
+    assert modules_of(steps) == ["Supervisor", "Supervisor"]  # refinement, then compose
+    assert "I need a couple of details" not in text
 
 
 # --- the date sync --------------------------------------------------------------
