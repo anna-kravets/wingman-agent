@@ -385,13 +385,39 @@
       font-size: 12px;
     }
 
-    .trace summary { display: flex; align-items: center; justify-content: space-between; padding: 11px 0; cursor: pointer; font-weight: 600; list-style: none; }
+    .trace > summary { display: flex; align-items: center; justify-content: space-between; padding: 11px 0; cursor: pointer; font-weight: 600; list-style: none; }
     .trace summary::-webkit-details-marker { display: none; }
+    .trace > summary::after { content: "+"; margin-left: 10px; color: #7b8782; font-size: 16px; font-weight: 500; line-height: 1; }
+    .trace[open] > summary::after { content: "−"; }
+    .trace-summary-main { display: flex; align-items: center; gap: 8px; }
+    .trace-summary-icon { color: #657660; font-family: var(--mono); font-size: 11px; }
     .trace-count { color: #7b8782; font-family: var(--mono); font-size: 11px; font-weight: 400; }
     .trace-content { display: grid; padding: 0 0 10px; }
-    .trace-step { border-top: 1px solid var(--line); padding: 11px 0 2px; }
-    .trace-step strong { display: block; margin-bottom: 5px; color: #33403b; font-family: var(--mono); font-size: 11px; font-weight: 500; }
-    .trace-step pre { max-height: 220px; margin: 0; overflow: auto; color: #5c6863; font: 11px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+    .trace-step { border-top: 1px solid var(--line); }
+    .trace-step > summary { display: flex; align-items: center; gap: 9px; padding: 11px 0; cursor: pointer; list-style: none; color: #33403b; font-weight: 600; }
+    .trace-step > summary::after { content: "⌄"; margin-left: auto; color: #849089; transition: transform .18s; }
+    .trace-step[open] > summary::after { transform: rotate(180deg); }
+    .trace-step-number { color: #778670; font-family: var(--mono); font-size: 10px; font-weight: 500; }
+    .trace-step-body { display: grid; gap: 14px; padding: 0 0 14px 20px; }
+    .trace-section { display: grid; gap: 7px; }
+    .trace-section-title { margin: 0; color: #738079; font-family: var(--mono); font-size: 9px; font-weight: 500; letter-spacing: .11em; text-transform: uppercase; }
+    .trace-prompt { border-top: 1px solid var(--line); }
+    .trace-prompt > summary { display: flex; align-items: center; justify-content: space-between; padding: 9px 0; cursor: pointer; list-style: none; color: #4c5a54; font-weight: 600; }
+    .trace-prompt > summary::after { content: "View"; color: #849089; font-size: 10px; font-weight: 700; }
+    .trace-prompt[open] > summary::after { content: "Hide"; }
+    .trace-text { max-height: 280px; margin: 0; overflow: auto; padding: 1px 0 10px; color: #596660; font: 11px/1.55 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+    .trace-response { display: grid; gap: 8px; }
+    .trace-fields { display: grid; gap: 7px; }
+    .trace-field { display: grid; gap: 3px; border-left: 2px solid #d5dfce; padding: 3px 0 3px 9px; }
+    .trace-field-label { color: #75817b; font-family: var(--mono); font-size: 9px; font-weight: 500; letter-spacing: .06em; text-transform: uppercase; }
+    .trace-value { color: #34423c; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .trace-value-muted { color: #8a948f; font-style: italic; }
+    .trace-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+    .trace-list-item { border-left: 1px solid #dfe5db; padding: 5px 0 5px 10px; }
+    .trace-list-item-simple { position: relative; border: 0; border-radius: 0; background: transparent; padding: 0 0 0 13px; }
+    .trace-list-item-simple::before { content: "•"; position: absolute; left: 1px; color: #78905f; }
+    .trace-scalar-yes { color: #47703c; font-weight: 600; }
+    .trace-scalar-no { color: #8a5f50; font-weight: 600; }
 
     .typing { display: none; align-items: center; gap: 12px; padding: 5px 0; color: var(--muted); font-size: 12px; }
     .typing.visible { display: flex; }
@@ -807,27 +833,129 @@
       const details = document.createElement("details");
       details.className = "trace";
       const summary = document.createElement("summary");
+      const summaryMain = document.createElement("span");
+      summaryMain.className = "trace-summary-main";
+      const summaryIcon = document.createElement("span");
+      summaryIcon.className = "trace-summary-icon";
+      summaryIcon.textContent = "↳";
       const label = document.createElement("span");
-      label.textContent = "How Wingman worked";
+      label.textContent = "Execution details";
       const count = document.createElement("span");
       count.className = "trace-count";
       count.textContent = `${steps.length} step${steps.length === 1 ? "" : "s"}`;
-      summary.append(label, count);
+      summaryMain.append(summaryIcon, label, count);
+      summary.append(summaryMain);
 
       const content = document.createElement("div");
       content.className = "trace-content";
       steps.forEach((step, index) => {
-        const block = document.createElement("div");
+        const block = document.createElement("details");
         block.className = "trace-step";
-        const title = document.createElement("strong");
-        title.textContent = `${index + 1}. ${step.module || "Agent"}`;
-        const pre = document.createElement("pre");
-        pre.textContent = JSON.stringify(step.response ?? {}, null, 2);
-        block.append(title, pre);
+        const stepSummary = document.createElement("summary");
+        const stepNumber = document.createElement("span");
+        stepNumber.className = "trace-step-number";
+        stepNumber.textContent = index + 1;
+        const title = document.createElement("span");
+        title.textContent = readableLabel(step.module || "Agent");
+        stepSummary.append(stepNumber, title);
+
+        const body = document.createElement("div");
+        body.className = "trace-step-body";
+
+        const promptSection = document.createElement("section");
+        promptSection.className = "trace-section";
+        promptSection.appendChild(traceSectionTitle("Prompt"));
+        const prompt = step.prompt && typeof step.prompt === "object" ? step.prompt : {};
+        promptSection.append(
+          promptElement("System instructions", prompt.system_prompt),
+          promptElement("Task and context", prompt.user_prompt)
+        );
+
+        const responseSection = document.createElement("section");
+        responseSection.className = "trace-section";
+        responseSection.appendChild(traceSectionTitle("Response"));
+        const response = document.createElement("div");
+        response.className = "trace-response";
+        response.appendChild(traceValueElement(step.response));
+        responseSection.appendChild(response);
+
+        body.append(promptSection, responseSection);
+        block.append(stepSummary, body);
         content.appendChild(block);
       });
       details.append(summary, content);
       return details;
+    }
+
+    function traceSectionTitle(text) {
+      const title = document.createElement("h4");
+      title.className = "trace-section-title";
+      title.textContent = text;
+      return title;
+    }
+
+    function promptElement(label, value) {
+      const details = document.createElement("details");
+      details.className = "trace-prompt";
+      const summary = document.createElement("summary");
+      summary.textContent = label;
+      const text = document.createElement("pre");
+      text.className = "trace-text";
+      text.textContent = value == null || value === "" ? "Not provided" : String(value);
+      details.append(summary, text);
+      return details;
+    }
+
+    function readableLabel(value) {
+      return String(value)
+        .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+        .replace(/[_-]+/g, " ")
+        .replace(/\b\w/g, letter => letter.toUpperCase());
+    }
+
+    function traceValueElement(value) {
+      if (Array.isArray(value)) {
+        const list = document.createElement("ol");
+        list.className = "trace-list";
+        if (!value.length) return traceScalar("None", "muted");
+        value.forEach(item => {
+          const row = document.createElement("li");
+          const simple = item == null || typeof item !== "object";
+          row.className = `trace-list-item${simple ? " trace-list-item-simple" : ""}`;
+          row.appendChild(traceValueElement(item));
+          list.appendChild(row);
+        });
+        return list;
+      }
+
+      if (value && typeof value === "object") {
+        const fields = document.createElement("div");
+        fields.className = "trace-fields";
+        const entries = Object.entries(value);
+        if (!entries.length) return traceScalar("No details returned", "muted");
+        entries.forEach(([key, item]) => {
+          const field = document.createElement("div");
+          field.className = "trace-field";
+          const label = document.createElement("div");
+          label.className = "trace-field-label";
+          label.textContent = readableLabel(key);
+          field.append(label, traceValueElement(item));
+          fields.appendChild(field);
+        });
+        return fields;
+      }
+
+      if (value === true) return traceScalar("Yes", "yes");
+      if (value === false) return traceScalar("No", "no");
+      if (value == null || value === "") return traceScalar("Not provided", "muted");
+      return traceScalar(String(value));
+    }
+
+    function traceScalar(text, tone) {
+      const value = document.createElement("div");
+      value.className = `trace-value${tone ? ` trace-value-${tone}` : ""}`;
+      value.textContent = text;
+      return value;
     }
 
     function selectConversation(id) {
