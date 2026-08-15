@@ -5,6 +5,8 @@ and conversation state is best-effort, so the endpoint answers as a single turn 
 the env vars are absent.
 """
 
+from datetime import datetime
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -123,7 +125,8 @@ def test_prior_turns_reach_the_supervisor(monkeypatch):
 
     seen = {}
     monkeypatch.setattr(
-        supervisor, "run", lambda prompt, history: (seen.update(history=list(history)), ("ok", []))[1]
+        supervisor, "run",
+        lambda prompt, history, *, local_time=None: (seen.update(history=list(history)), ("ok", []))[1],
     )
 
     client.post("/api/execute", json={"prompt": "follow up", "conversation_id": "c1"})
@@ -208,6 +211,43 @@ def test_delete_is_owner_scoped(monkeypatch):
     assert response.json() == {"status": "ok"}
     assert len(deleted) == 1
     assert deleted[0][1] == "c1"
+
+
+def test_the_browsers_local_time_reaches_the_supervisor(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(
+        supervisor, "run",
+        lambda prompt, history, *, local_time=None: (seen.update(when=local_time), ("ok", []))[1],
+    )
+
+    client.post("/api/execute", json={"prompt": COMPLETE, "local_time": "2026-03-04T05:06:07"})
+
+    assert seen["when"] == datetime(2026, 3, 4, 5, 6, 7)
+
+
+def test_an_offset_is_reduced_to_the_wall_clock_reading(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(
+        supervisor, "run",
+        lambda prompt, history, *, local_time=None: (seen.update(when=local_time), ("ok", []))[1],
+    )
+
+    client.post("/api/execute", json={"prompt": COMPLETE, "local_time": "2026-03-04T05:06:07+03:00"})
+
+    # Naive throughout: flight_agent subtracts local_now from a tz-stripped departure.
+    assert seen["when"] == datetime(2026, 3, 4, 5, 6, 7)
+
+
+def test_an_unusable_local_time_falls_back_to_the_server_clock(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(
+        supervisor, "run",
+        lambda prompt, history, *, local_time=None: (seen.update(when=local_time), ("ok", []))[1],
+    )
+
+    client.post("/api/execute", json={"prompt": COMPLETE, "local_time": "yesterday evening"})
+
+    assert seen["when"] is None
 
 
 # --- the other three endpoints --------------------------------------------------

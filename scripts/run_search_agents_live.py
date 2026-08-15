@@ -62,10 +62,9 @@ def build_request_patch(case: dict, original):
         clock.fromisoformat(case["local_now"]["time"]),
     )
 
-    def patched(prompt, history):
-        request, step = original(prompt, history)
+    def patched(prompt, history, _local_now):
+        request, step = original(prompt, history, when.isoformat(timespec="seconds"))
         request.update(case["request_override"])
-        request["local_now"] = when.isoformat(timespec="seconds")
         request["missing"] = [f for f in supervisor.REQUIRED_FIELDS if not request.get(f)]
         return request, step
 

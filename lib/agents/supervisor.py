@@ -161,7 +161,7 @@ def _party_size(value) -> int:
     return size if size > 0 else 1
 
 
-def _request_from(parsed: dict, follow_up: bool) -> dict:
+def _request_from(parsed: dict, follow_up: bool, local_now: str) -> dict:
     """The model's JSON forced into the locked request shape (`docs/PROJECT_PLAN.md` §1).
 
     Everything the rest of the system indexes into is set here whatever came back: a
@@ -185,13 +185,14 @@ def _request_from(parsed: dict, follow_up: bool) -> dict:
     # the cheapest turn in the system, and the common case once a plan exists.
     request["needs"] = needs if (needs or follow_up) else list(NEEDS)
 
-    # The model has no clock, and the date sync runs on this.
-    request["local_now"] = datetime.now().isoformat(timespec="seconds")
+    # The model has no clock, and the date sync runs on this. It is the passenger's
+    # wall clock when their browser sent one, because the server's is UTC on Vercel.
+    request["local_now"] = local_now
     request["missing"] = [f for f in REQUIRED_FIELDS if not request.get(f)]
     return request
 
 
-def _extract_request(prompt: str, history: list[dict]) -> tuple[dict, dict]:
+def _extract_request(prompt: str, history: list[dict], local_now: str) -> tuple[dict, dict]:
     """Question refinement: message -> (request, step).
 
     History goes into the call so a follow-up inherits what the passenger already
@@ -209,7 +210,7 @@ def _extract_request(prompt: str, history: list[dict]) -> tuple[dict, dict]:
             f"{MODULE}: the refinement pass returned {type(parsed).__name__}, not an object",
             steps=[step],
         )
-    return _request_from(parsed, bool(history)), step
+    return _request_from(parsed, bool(history), local_now), step
 
 
 def _line(label: str, *parts: str) -> str:
@@ -304,12 +305,14 @@ def _compose(
     return (text or "").strip() or digest, [step]
 
 
-def run(prompt: str, history: list[dict]) -> tuple[str, list[dict]]:
+def run(prompt: str, history: list[dict], *,
+        local_time: datetime | None = None) -> tuple[str, list[dict]]:
     """Returns (response_text, steps) — see `docs/PROJECT_PLAN.md` §1."""
     history = _trim(history)
     steps: list[dict] = []
 
-    request, refine_step = _extract_request(prompt, history)
+    local_now = (local_time or datetime.now()).isoformat(timespec="seconds")
+    request, refine_step = _extract_request(prompt, history, local_now)
     # Keep the current utterance available to sub-agents. It is intentionally an
     # internal field: the locked structured-request schema can stay unchanged, while
     # follow-up questions do not disappear during extraction.

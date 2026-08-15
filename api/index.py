@@ -2,6 +2,7 @@ import hashlib
 import logging
 import re
 import secrets
+from datetime import datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -117,6 +118,22 @@ def _error(message: str) -> dict:
     return {"status": "error", "error": message, "response": None, "steps": []}
 
 
+def _local_time(value) -> datetime | None:
+    """The passenger's own wall clock, or None.
+
+    Never raises: a device sending a malformed timestamp is not worth a failed turn,
+    and the server clock is a working fallback. The offset is dropped rather than
+    applied — every consumer of `local_now` wants the wall-clock reading, and
+    `flight_agent` subtracts it from a tz-stripped departure.
+    """
+    if not isinstance(value, str):
+        return None
+    try:
+        return datetime.fromisoformat(value).replace(tzinfo=None)
+    except ValueError:
+        return None
+
+
 def _device_id(request: Request, response: Response) -> str:
     candidate = request.cookies.get(DEVICE_COOKIE, "")
     device_token = (
@@ -177,6 +194,7 @@ async def execute(request: Request, response: Response):
         return _error('Request body must be a JSON object with a non-empty "prompt" string.')
 
     conversation_id = body.get("conversation_id")
+    local_time = _local_time(body.get("local_time"))
 
     try:
         history = (
@@ -187,7 +205,7 @@ async def execute(request: Request, response: Response):
         history = []
 
     try:
-        response_text, steps = supervisor.run(prompt, history)
+        response_text, steps = supervisor.run(prompt, history, local_time=local_time)
     except Exception as exc:
         return _error(f"The agent failed while handling the request: {exc}")
 

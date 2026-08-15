@@ -289,5 +289,23 @@ def test_a_failing_flight_search_skips_the_stay_rather_than_guessing_nights(monk
     assert "DocumentationAgent" in modules_of(steps)  # rights are independent
 
 
+# --- the clock --------------------------------------------------------------
+
+
+def test_the_passengers_own_clock_reaches_the_agents():
+    when = datetime.now().replace(hour=3, minute=33, second=7, microsecond=0)
+    _, steps = supervisor.run(COMPLETE, [], local_time=when)
+
+    flight = next(s for s in steps if s["module"] == "FlightAgent")
+    assert "Local time now: " + when.isoformat(timespec="seconds") in flight["prompt"]["user_prompt"]
+
+
+def test_without_a_clock_the_server_time_is_used():
+    _, steps = supervisor.run(COMPLETE, [])
+
+    flight = next(s for s in steps if s["module"] == "FlightAgent")
+    assert f"Local time now: {date.today().isoformat()}" in flight["prompt"]["user_prompt"]
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))

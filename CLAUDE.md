@@ -119,7 +119,7 @@ from:
 
 - **Resolved (7/8/2026, implementation revised 8/8/2026):** Multi-turn is required, not optional
   (see §5). `POST /api/execute` accepts an optional `conversation_id`; **`api/index.py` loads that
-  conversation's prior turns and passes them in as a list — `Supervisor.run(prompt, history)` —
+  conversation's prior turns and passes them in as a list — `Supervisor.run(prompt, history, local_time=...)` —
   then persists the new turn.** Agent code never touches the store, which keeps it testable
   without Supabase; the Supervisor decides how much of `history` goes into a prompt (cap it, see
   `docs/PROJECT_PLAN.md` §7). Do **not** give the Supervisor the `conversation_id` and have it

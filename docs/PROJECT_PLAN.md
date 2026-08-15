@@ -50,11 +50,15 @@ structured result the Supervisor consumes, `steps` is every step that agent prod
 order.
 
 ```python
-supervisor.run(prompt: str, history: list[dict])            -> tuple[str, list[dict]]   # (response_text, steps)
+supervisor.run(prompt: str, history: list[dict], *, local_time: datetime | None = None) -> tuple[str, list[dict]]
 flight_agent.run(request: dict, history: list[dict])        -> tuple[dict, list[dict]]  # (payload, steps)
 accommodation_agent.run(request, stay_window, history)      -> tuple[dict, list[dict]]
 documentation_agent.run(request: dict, history: list[dict]) -> tuple[dict, list[dict]]
 ```
+
+> `local_time` is the passenger's own wall clock, supplied by the GUI as an optional `local_time`
+> on `/api/execute` and `None` for a bare `{"prompt": ...}` call, which falls back to the server
+> clock. It is naive by contract: `flight_agent` subtracts `local_now` from a tz-stripped departure.
 
 `history` is the conversation's prior turns, `[{"prompt": ..., "response": ...}, ...]`, oldest
 first, already loaded by `api/index.py` — agent code never touches Supabase. The Supervisor decides

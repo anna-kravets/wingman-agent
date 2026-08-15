@@ -24,18 +24,21 @@ CASE = {
 }
 
 
-def complete_request():
-    return {"party_size": 1, "local_now": "ignored", "flight_number": "LH318",
+def complete_request(local_now="ignored"):
+    return {"party_size": 1, "local_now": local_now, "flight_number": "LH318",
             "origin": "TLV", "destination": "FRA", "disruption": "cancelled",
             "stranded_at": "TLV"}
 
 
 def test_local_now_is_injected_from_the_case():
-    def original(prompt, history):
-        return complete_request(), {"module": "Supervisor"}
+    def original(prompt, history, local_now):
+        # patched() no longer overwrites local_now itself — it now trusts
+        # `original` to embed the clock it was handed, as the real
+        # supervisor._extract_request does via _request_from.
+        return complete_request(local_now), {"module": "Supervisor"}
 
     patched = runner.build_request_patch(CASE, original)
-    request, _ = patched("prompt", [])
+    request, _ = patched("prompt", [], "ignored")
 
     expected_date = date.today() + timedelta(days=1)
     assert request["local_now"].startswith(expected_date.isoformat())
@@ -43,21 +46,21 @@ def test_local_now_is_injected_from_the_case():
 
 
 def test_request_override_wins():
-    def original(prompt, history):
+    def original(prompt, history, local_now):
         return complete_request(), {"module": "Supervisor"}
 
-    request, _ = runner.build_request_patch(CASE, original)("prompt", [])
+    request, _ = runner.build_request_patch(CASE, original)("prompt", [], "ignored")
     assert request["party_size"] == 4
 
 
 def test_missing_is_recomputed_so_the_gate_still_works():
-    def original(prompt, history):
+    def original(prompt, history, local_now):
         return {"party_size": 1, "local_now": "x", "flight_number": None,
                 "origin": None, "destination": None, "disruption": None,
                 "stranded_at": None}, {"module": "Supervisor"}
 
     case = dict(CASE, request_override={})
-    request, _ = runner.build_request_patch(case, original)("prompt", [])
+    request, _ = runner.build_request_patch(case, original)("prompt", [], "ignored")
     assert "flight_number" in request["missing"]
 
 
