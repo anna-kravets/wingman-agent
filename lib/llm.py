@@ -44,9 +44,14 @@ class LLMError(RuntimeError):
     a missing API key, say.
     """
 
-    def __init__(self, message: str, steps: list[dict] | None = None):
+    def __init__(self, message: str, steps: list[dict] | None = None,
+                 passenger_message: str | None = None):
         super().__init__(message)
         self.steps = steps or []
+        # Set only where the wording was written for the passenger. The same exception
+        # also carries internal text ("no option named a flight that was actually
+        # offered"), and nothing else tells the two apart.
+        self.passenger_message = passenger_message
 
 
 def _config() -> tuple[str, str]:

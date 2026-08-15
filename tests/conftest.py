@@ -102,14 +102,14 @@ def _refine_response(user_prompt: str) -> dict:
 
 
 def _compose_response(user_prompt: str) -> str:
-    """The fake composer hands the crew's results straight back. The real model rewrites
-    them as prose for one tired person; the tests assert on the facts, not the prose."""
-    return user_prompt.rpartition("What the crew came back with:")[2].strip()
+    """The fake composer hands the findings straight back. The real model rewrites them
+    as prose for one tired person; the tests assert on the facts, not the prose."""
+    return user_prompt.rpartition("Findings:")[2].strip()
 
 
 def _supervisor_response(user_prompt: str):
     """Both Supervisor calls arrive here: the composing one is the one carrying results."""
-    if "What the crew came back with:" in user_prompt:
+    if "Findings:" in user_prompt:
         return _compose_response(user_prompt)
     return _refine_response(user_prompt)
 

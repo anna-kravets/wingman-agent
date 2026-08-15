@@ -15,6 +15,7 @@ Re-dispatching the whole crew would cost ~7 LLM calls and 2 AeroDataBox units fo
 line of conversation.
 """
 
+import logging
 from datetime import datetime
 
 from lib import llm
@@ -22,6 +23,15 @@ from lib.agents import accommodation_agent, documentation_agent, flight_agent
 from lib.tools import airports, flights
 
 MODULE = "Supervisor"
+
+logger = logging.getLogger(__name__)
+
+# What the passenger reads when an agent could not finish and wrote nothing better.
+FAILURE_MESSAGES = {
+    "flight": "I could not get onward flight options just now.",
+    "stay": "I could not find somewhere to stay just now.",
+    "rights": "I could not work out what you are owed just now.",
+}
 
 # How many prior turns reach a prompt. History is re-sent on every call of every turn,
 # so an uncapped conversation costs O(n^2) tokens against a $13 project budget
@@ -111,14 +121,18 @@ the table. Re-running the whole crew for a one-line question costs the passenger
 costs the project money.
 """
 
-COMPOSE_SYSTEM_PROMPT = """You write the passenger's recovery plan from the results the crew returned.
+COMPOSE_SYSTEM_PROMPT = """You are Wingman, writing directly to one passenger whose flight has just been disrupted.
+
+You are a single assistant. Never mention how you work: no tools, no searches, no internal steps, and
+never any suggestion that the work was divided up or handed to anyone. The passenger is talking to
+you, not to a system.
 
 Speak to one tired person, not to a user. Short sentences, active voice, no jargon and no
 regulation-speak they would have to decode. Lead with the flight, then where they sleep, then what
-they are owed and what to do about it — that is the order they need it in.
+they are owed and what to do about it - that is the order they need it in.
 
-State amounts and entitlements only if a crew result supports them, and say which document each came
-from. If part of the crew failed, say plainly what is missing rather than papering over it.
+State amounts and entitlements only where the findings support them, and say which document each came
+from. Where something could not be finished, say plainly what is missing rather than papering over it.
 
 State any assumption you are given, in your own words, so the passenger can correct it.
 
@@ -385,7 +399,7 @@ def _digest(results: dict, failures: list[str]) -> str:
             lines.append(f"  Next: {action}")
 
     for failure in failures:
-        lines.append(f"Could not complete: {failure}")
+        lines.append(failure)
 
     lines.append("")
     lines.append("Ask me to compare any of these, or about the terms of one in particular.")
@@ -409,7 +423,7 @@ def _compose_prompt(request: dict, digest: str, history: list[dict]) -> str:
     if request.get("assumptions"):
         lines += ["", "Assumptions you must state in the plan:"]
         lines += [f"  - {a}" for a in request["assumptions"]]
-    lines += ["", "What the crew came back with:", digest]
+    lines += ["", "Findings:", digest]
     return "\n".join(lines)
 
 
@@ -467,7 +481,7 @@ def run(prompt: str, history: list[dict], *,
     failures: list[str] = []
 
     # One agent failing must not cost the passenger the rest of the plan.
-    def dispatch(label: str, key: str, fn, *args):
+    def dispatch(key: str, fn, *args):
         try:
             payload, agent_steps = fn(*args, history)
             results[key] = payload
@@ -478,25 +492,23 @@ def run(prompt: str, history: list[dict], *,
             # step; an agent that got partway through several calls attaches the ones
             # that already succeeded (see documentation_agent).
             steps.extend(getattr(exc, "steps", []))
-            failures.append(f"{label} ({exc})")
+            # The cause is ours, not the passenger's. `steps` keeps it for the trace and
+            # the log keeps it for the failures that carry no step at all.
+            logger.exception("%s could not be completed", key)
+            reason = getattr(exc, "passenger_message", None) or FAILURE_MESSAGES[key]
+            failures.append(_sentence(reason))
 
     if "flight" in needs:
-        dispatch("onward flights", "flight", flight_agent.run, request)
+        dispatch("flight", flight_agent.run, request)
 
     # Date sync: the stay follows the flight that was actually found, never a guess.
     if "stay" in needs:
         stay_window = _stay_window(request, results.get("flight"))
         if stay_window:
-            dispatch(
-                "somewhere to sleep",
-                "stay",
-                accommodation_agent.run,
-                request,
-                stay_window,
-            )
+            dispatch("stay", accommodation_agent.run, request, stay_window)
 
     if "rights" in needs:
-        dispatch("your entitlements", "rights", documentation_agent.run, request)
+        dispatch("rights", documentation_agent.run, request)
 
     text, compose_steps = _compose(request, results, failures, history)
     steps.extend(compose_steps)

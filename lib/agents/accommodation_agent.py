@@ -197,7 +197,7 @@ def run(request: dict, stay_window: dict, history: list[dict]) -> tuple[dict, li
     if not candidates:
         # Same reasoning as FlightAgent: no verified property, no invention, no LLM call.
         # A named hotel that does not exist sends a tired passenger to the wrong place.
-        raise llm.LLMError(f"{MODULE}: {NO_LIVE_DATA}", steps=[])
+        raise llm.LLMError(f"{MODULE}: {NO_LIVE_DATA}", steps=[], passenger_message=NO_LIVE_DATA)
 
     payload, step = llm.call(
         MODULE, SYSTEM_PROMPT,

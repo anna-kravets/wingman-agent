@@ -209,7 +209,7 @@ def run(request: dict, history: list[dict]) -> tuple[dict, list[dict]]:
     # to tell someone who asked for TLV to TLV.
     problem = flights.route_problem(origin, destination)
     if problem:
-        raise llm.LLMError(f"{MODULE}: {problem}", steps=[])
+        raise llm.LLMError(f"{MODULE}: {problem}", steps=[], passenger_message=problem)
 
     after = datetime.fromisoformat(request["local_now"])
     candidates = flights.search(origin, destination, after)
@@ -221,7 +221,7 @@ def run(request: dict, history: list[dict]) -> tuple[dict, list[dict]]:
         # Live validation on 10/8/2026 found the model refuses here anyway, which is
         # why the earlier "degrade to labelled illustrative options" decision was
         # reversed. `steps` is empty because no call was made.
-        raise llm.LLMError(f"{MODULE}: {NO_LIVE_DATA}", steps=[])
+        raise llm.LLMError(f"{MODULE}: {NO_LIVE_DATA}", steps=[], passenger_message=NO_LIVE_DATA)
 
     payload, step = llm.call(
         MODULE, SYSTEM_PROMPT, _user_prompt(request, history, candidates), expect_json=True

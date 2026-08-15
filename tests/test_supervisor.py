@@ -201,11 +201,41 @@ def test_one_agent_failing_does_not_lose_the_rest_of_the_plan(monkeypatch):
     monkeypatch.setattr(documentation_agent, "run", explode)
     text, steps = supervisor.run(COMPLETE, [])
 
-    assert "Onward flight" in text                  # flight survived
-    assert "Somewhere to sleep" in text             # stay survived
-    assert "Could not complete: your entitlements" in text
-    assert "Pinecone unreachable" in text           # the cause is not swallowed
-    assert "DocumentationAgent" not in modules_of(steps)
+    assert "Onward flight" in text or "ONWARD FLIGHT" in text
+    assert supervisor.FAILURE_MESSAGES["rights"] in text
+    # The cause is for us, not for a passenger standing at a gate.
+    assert "Pinecone" not in text
+    assert "DocumentationAgent" not in text
+
+
+def test_an_agents_own_refusal_wording_survives(monkeypatch):
+    from lib.agents import flight_agent
+    from lib.llm import LLMError
+
+    def refuse(*args, **kwargs):
+        raise LLMError("FlightAgent: internal wording",
+                       steps=[], passenger_message=flight_agent.NO_LIVE_DATA)
+
+    monkeypatch.setattr(flight_agent, "run", refuse)
+    text, _ = supervisor.run(COMPLETE, [])
+
+    assert "check your airline's app or the departures board" in text
+    assert "internal wording" not in text
+    assert "FlightAgent" not in text
+
+
+def test_an_internal_failure_falls_back_to_a_written_sentence(monkeypatch):
+    from lib.agents import flight_agent
+    from lib.llm import LLMError
+
+    def refuse(*args, **kwargs):
+        raise LLMError("FlightAgent: no option named a flight that was actually offered", steps=[])
+
+    monkeypatch.setattr(flight_agent, "run", refuse)
+    text, _ = supervisor.run(COMPLETE, [])
+
+    assert supervisor.FAILURE_MESSAGES["flight"] in text
+    assert "no option named a flight" not in text
 
 
 def test_a_failed_call_still_appears_in_the_trace(monkeypatch):
@@ -250,7 +280,7 @@ def test_a_failed_composing_call_still_hands_over_the_plan(monkeypatch):
     failed_step = make_step("Supervisor", "compose", "user", {"error": "timed out"})
 
     def fail_on_compose(module, system_prompt, user_prompt, **kwargs):
-        if "What the crew came back with:" in user_prompt:
+        if "Findings:" in user_prompt:
             raise llm.LLMError("Supervisor: timed out", steps=[failed_step])
         return crew(module, system_prompt, user_prompt, **kwargs)
 
@@ -273,8 +303,8 @@ def test_a_half_labelled_option_still_produces_a_plan(monkeypatch):
 
     text, _ = supervisor.run(COMPLETE, [])
 
-    assert "Onward flight" in text
-    assert "Could not complete: onward flights" not in text
+    assert "Onward flight" in text or "ONWARD FLIGHT" in text
+    assert supervisor.FAILURE_MESSAGES["flight"] not in text
 
 
 def test_a_failing_flight_search_skips_the_stay_rather_than_guessing_nights(monkeypatch):
@@ -285,7 +315,7 @@ def test_a_failing_flight_search_skips_the_stay_rather_than_guessing_nights(monk
 
     # Booking the wrong nights is worse than saying a flight is needed first.
     assert "AccommodationAgent" not in modules_of(steps)
-    assert "Could not complete: onward flights" in text
+    assert supervisor.FAILURE_MESSAGES["flight"] in text
     assert "DocumentationAgent" in modules_of(steps)  # rights are independent
 
 
@@ -477,6 +507,23 @@ def test_assumptions_reach_the_composing_call():
     prompt = supervisor._compose_prompt(request, "digest", [])
 
     assert "They said X, but Y." in prompt
+
+
+def test_the_composing_prompt_never_names_the_inside_of_the_system():
+    _, steps = supervisor.run(COMPLETE, [])
+    compose = [s for s in steps if s["module"] == "Supervisor"][-1]["prompt"]
+
+    banned = ("crew", "FlightAgent", "AccommodationAgent", "DocumentationAgent", "agent")
+    haystack = (compose["system_prompt"] + compose["user_prompt"]).lower()
+    for word in banned:
+        assert word.lower() not in haystack, f"{word!r} leaks into the composing call"
+
+
+def test_the_composing_prompt_says_who_it_is():
+    _, steps = supervisor.run(COMPLETE, [])
+    compose = [s for s in steps if s["module"] == "Supervisor"][-1]["prompt"]
+
+    assert "Wingman" in compose["system_prompt"]
 
 
 if __name__ == "__main__":
