@@ -1,4 +1,4 @@
-"""FlightAgent: grounding, validation and the trace it leaves behind."""
+"""FlightAgent: grounding, enrichment from the candidates, caveats, and the trace."""
 
 import pytest
 
@@ -23,29 +23,35 @@ CANDIDATE = {
 
 
 def fake_call(payload):
-    def call(module, system_prompt, user_prompt, *, expect_json=False):
+    def call(module, system_prompt, user_prompt, *, expect_json=False, **kwargs):
         return payload, make_step(module, system_prompt, user_prompt, payload)
     return call
 
 
-def good_payload(depart="2026-08-10T16:30+03:00", arrive="2026-08-10T20:10+02:00",
-                 recommended="F1"):
+def good_payload(flight_number="LH 687", recommended="F1"):
+    """What the model now returns: a choice and prose, not a transcription."""
     return {
         "options": [{
-            "id": "F1", "airline": "Lufthansa", "flight_number": "LH 687",
-            "origin": "TLV", "destination": "FRA", "depart": depart, "arrive": arrive,
-            "stops": 0, "fare_conditions": "See your Contract of Carriage.",
-            "notes": "Nonstop.",
+            "id": "F1",
+            "flight_number": flight_number,
+            "rebooking": "Same airline as the cancelled flight.",
+            "notes": "Earliest arrival.",
         }],
         "recommended_id": recommended,
     }
 
 
-def test_real_candidates_reach_the_prompt(monkeypatch):
-    monkeypatch.setattr(flights, "search", lambda *a, **k: [CANDIDATE])
-    monkeypatch.setattr(llm, "call", fake_call(good_payload()))
+def run_with(monkeypatch, candidates, payload):
+    monkeypatch.setattr(flights, "search", lambda *a, **k: candidates)
+    monkeypatch.setattr(llm, "call", fake_call(payload))
+    return flight_agent.run(REQUEST, [])
 
-    _, steps = flight_agent.run(REQUEST, [])
+
+# --- grounding and the trace ----------------------------------------------------
+
+
+def test_real_candidates_reach_the_prompt(monkeypatch):
+    _, steps = run_with(monkeypatch, [CANDIDATE], good_payload())
 
     user_prompt = steps[0]["prompt"]["user_prompt"]
     assert "LH 687" in user_prompt
@@ -53,69 +59,10 @@ def test_real_candidates_reach_the_prompt(monkeypatch):
 
 
 def test_one_llm_call_produces_exactly_one_step(monkeypatch):
-    monkeypatch.setattr(flights, "search", lambda *a, **k: [CANDIDATE])
-    monkeypatch.setattr(llm, "call", fake_call(good_payload()))
-
-    _, steps = flight_agent.run(REQUEST, [])
+    _, steps = run_with(monkeypatch, [CANDIDATE], good_payload())
 
     assert len(steps) == 1
     assert steps[0]["module"] == "FlightAgent"
-
-
-def test_no_candidates_refuses_without_calling_the_model(monkeypatch):
-    called = []
-    monkeypatch.setattr(flights, "search", lambda *a, **k: [])
-    monkeypatch.setattr(llm, "call", lambda *a, **k: called.append(1))
-
-    with pytest.raises(llm.LLMError) as caught:
-        flight_agent.run(REQUEST, [])
-
-    # Live validation (10/8/2026) showed the model refuses to invent here anyway, and
-    # a fabricated flight number for a real airline is actionable. So: no call, no cost,
-    # no step - and the passenger is told plainly.
-    assert not called
-    assert caught.value.steps == []
-    assert "Nothing was invented" in str(caught.value)
-
-
-def test_options_with_unparseable_times_are_dropped(monkeypatch):
-    payload = good_payload()
-    payload["options"].append({
-        "id": "F2", "airline": "El Al", "flight_number": "LY 357",
-        "origin": "TLV", "destination": "FRA",
-        "depart": "tomorrow morning", "arrive": "later", "stops": 0,
-        "fare_conditions": "", "notes": "",
-    })
-    monkeypatch.setattr(flights, "search", lambda *a, **k: [CANDIDATE])
-    monkeypatch.setattr(llm, "call", fake_call(payload))
-
-    result, _ = flight_agent.run(REQUEST, [])
-
-    # The Supervisor calls fromisoformat on depart; a bad one costs the hotel too.
-    assert [o["id"] for o in result["options"]] == ["F1"]
-
-
-def test_a_dangling_recommended_id_falls_back_to_the_first_option(monkeypatch):
-    monkeypatch.setattr(flights, "search", lambda *a, **k: [CANDIDATE])
-    monkeypatch.setattr(llm, "call", fake_call(good_payload(recommended="F9")))
-
-    result, _ = flight_agent.run(REQUEST, [])
-
-    assert result["recommended_id"] == "F1"
-
-
-def test_no_usable_option_raises_but_keeps_the_step(monkeypatch):
-    payload = {"options": [{"id": "F1", "depart": "soon", "arrive": "later"}],
-               "recommended_id": "F1"}
-    monkeypatch.setattr(flights, "search", lambda *a, **k: [CANDIDATE])
-    monkeypatch.setattr(llm, "call", fake_call(payload))
-
-    with pytest.raises(llm.LLMError) as caught:
-        flight_agent.run(REQUEST, [])
-
-    # The spec wants every call that happened in the trace, failures included.
-    assert len(caught.value.steps) == 1
-    assert caught.value.steps[0]["module"] == "FlightAgent"
 
 
 def test_history_reaches_the_prompt(monkeypatch):
@@ -128,6 +75,165 @@ def test_history_reaches_the_prompt(monkeypatch):
     assert "what about earlier?" in steps[0]["prompt"]["user_prompt"]
 
 
+# --- facts come from the candidate, not the model -------------------------------
+
+
+def test_facts_are_taken_from_the_candidate_not_the_model(monkeypatch):
+    lying = {"options": [{
+        "id": "F1", "flight_number": "LH 687",
+        "depart": "2026-01-01T00:00:00", "arrive": "2026-01-01T01:00:00",
+        "airline": "Wrong Airways", "origin": "XXX", "destination": "YYY",
+        "rebooking": "", "notes": "",
+    }], "recommended_id": "F1"}
+
+    option = run_with(monkeypatch, [CANDIDATE], lying)[0]["options"][0]
+
+    # The model cannot corrupt a fact it is no longer asked to copy.
+    assert option["depart"] == CANDIDATE["depart"]
+    assert option["airline"] == "Lufthansa"
+    assert option["origin"] == "TLV" and option["destination"] == "FRA"
+
+
+def test_fields_the_tool_fetched_are_surfaced(monkeypatch):
+    option = run_with(monkeypatch, [CANDIDATE], good_payload())[0]["options"][0]
+
+    assert option["terminal"] == "3"
+    assert option["aircraft"] == "Airbus A320"
+    assert option["status"] == "Expected"
+    assert option["airline_iata"] == "LH"
+
+
+def test_duration_and_next_day_are_computed(monkeypatch):
+    option = run_with(monkeypatch, [CANDIDATE], good_payload())[0]["options"][0]
+
+    # 16:30+03:00 -> 20:10+02:00 is 4h40m of actual travel, same calendar day.
+    assert option["duration_minutes"] == 280
+    assert option["arrives_next_day"] is False
+
+
+def test_an_overnight_flight_is_flagged(monkeypatch):
+    overnight = dict(CANDIDATE, flight="LH 999",
+                     depart="2026-08-10T23:30+03:00", arrive="2026-08-11T03:10+02:00")
+
+    option = run_with(monkeypatch, [overnight],
+                      good_payload(flight_number="LH 999"))[0]["options"][0]
+
+    assert option["arrives_next_day"] is True
+
+
+def test_an_option_matching_no_candidate_is_dropped(monkeypatch):
+    payload = good_payload()
+    payload["options"].append({"id": "F2", "flight_number": "XX 999",
+                               "rebooking": "", "notes": ""})
+
+    result, _ = run_with(monkeypatch, [CANDIDATE], payload)
+
+    # Grounding is now structural: an invented flight matches nothing and cannot survive.
+    assert [o["id"] for o in result["options"]] == ["F1"]
+
+
+def test_flight_numbers_match_regardless_of_spacing(monkeypatch):
+    result, _ = run_with(monkeypatch, [CANDIDATE], good_payload(flight_number="lh687"))
+
+    assert result["options"][0]["flight_number"] == "LH 687"
+
+
+def test_no_usable_option_raises_but_keeps_the_step(monkeypatch):
+    invented = {"options": [{"id": "F1", "flight_number": "XX 999"}], "recommended_id": "F1"}
+
+    with pytest.raises(llm.LLMError) as caught:
+        run_with(monkeypatch, [CANDIDATE], invented)
+
+    # The spec wants every call that happened in the trace, failures included.
+    assert len(caught.value.steps) == 1
+    assert caught.value.steps[0]["module"] == "FlightAgent"
+
+
+def test_a_dangling_recommended_id_falls_back_to_the_first_option(monkeypatch):
+    result, _ = run_with(monkeypatch, [CANDIDATE], good_payload(recommended="F9"))
+
+    assert result["recommended_id"] == "F1"
+
+
+def test_stops_and_fare_conditions_are_gone(monkeypatch):
+    option = run_with(monkeypatch, [CANDIDATE], good_payload())[0]["options"][0]
+
+    assert "stops" not in option          # always 0 since direct-only is a decision
+    assert "fare_conditions" not in option
+    assert option["rebooking"] == "Same airline as the cancelled flight."
+
+
+# --- caveats --------------------------------------------------------------------
+
+
+def test_a_thin_result_is_flagged(monkeypatch):
+    caveats = run_with(monkeypatch, [CANDIDATE], good_payload())[0]["caveats"]
+
+    assert any(c.startswith("NOTE:") and "1 flight" in c for c in caveats)
+
+
+def test_a_different_carrier_is_flagged(monkeypatch):
+    # REQUEST's disrupted flight is LH and the candidate is LH, so nothing to say.
+    caveats = run_with(monkeypatch, [CANDIDATE], good_payload())[0]["caveats"]
+    assert not any("different airline" in c for c in caveats)
+
+    other = dict(CANDIDATE, airline_iata="LY", airline="El Al", flight="LY 1")
+    caveats = run_with(monkeypatch, [other],
+                       good_payload(flight_number="LY 1"))[0]["caveats"]
+    assert any("different airline" in c for c in caveats)
+
+
+def test_a_departure_the_passenger_may_miss_asks_for_confirmation(monkeypatch):
+    # local_now is 22:15; a 23:00 departure leaves 45 minutes.
+    soon = dict(CANDIDATE, flight="LH 1",
+                depart="2026-08-09T23:00:00+03:00", arrive="2026-08-10T02:00:00+02:00")
+
+    caveats = run_with(monkeypatch, [soon],
+                       good_payload(flight_number="LH 1"))[0]["caveats"]
+
+    assert any(c.startswith("CONFIRM:") and "minutes" in c for c in caveats)
+
+
+def test_a_delayed_option_is_flagged(monkeypatch):
+    delayed = dict(CANDIDATE, status="Delayed")
+
+    caveats = run_with(monkeypatch, [delayed], good_payload())[0]["caveats"]
+
+    assert any("delayed" in c.lower() for c in caveats)
+
+
+def test_the_model_may_add_its_own_caveats(monkeypatch):
+    payload = dict(good_payload(), caveats=["NOTE: the model noticed something."])
+
+    caveats = run_with(monkeypatch, [CANDIDATE], payload)[0]["caveats"]
+
+    assert "NOTE: the model noticed something." in caveats
+    assert len(caveats) > 1          # code-generated ones come first and are kept
+
+
+def test_every_caveat_declares_its_intent(monkeypatch):
+    caveats = run_with(monkeypatch, [CANDIDATE], good_payload())[0]["caveats"]
+
+    for caveat in caveats:
+        assert caveat.startswith(("NOTE:", "ASK:", "CONFIRM:")), caveat
+
+
+# --- refusals, unchanged --------------------------------------------------------
+
+
+def test_no_candidates_refuses_without_calling_the_model(monkeypatch):
+    called = []
+    monkeypatch.setattr(flights, "search", lambda *a, **k: [])
+    monkeypatch.setattr(llm, "call", lambda *a, **k: called.append(1))
+
+    with pytest.raises(llm.LLMError) as caught:
+        flight_agent.run(REQUEST, [])
+
+    assert not called
+    assert caught.value.steps == []
+    assert "Nothing was invented" in str(caught.value)
+
+
 def test_an_impossible_route_is_refused_before_any_search(monkeypatch):
     searched, called = [], []
     monkeypatch.setattr(flights, "search", lambda *a, **k: searched.append(1) or [])
@@ -136,7 +242,6 @@ def test_an_impossible_route_is_refused_before_any_search(monkeypatch):
     with pytest.raises(llm.LLMError) as caught:
         flight_agent.run(dict(REQUEST, destination="TLV"), [])
 
-    # Neither an API unit nor an LLM call is spent discovering the obvious.
     assert not searched and not called
     assert "no flight to look for" in str(caught.value)
 
