@@ -128,7 +128,9 @@ def main() -> int:
     parser.add_argument("--scenario", choices=tuple(CASES))
     parser.add_argument("--all", action="store_true",
                         help="Run every scenario in one process so the route cache is shared.")
-    parser.add_argument("--max-llm-calls", type=int, default=30)
+    # Four calls per scenario since the Supervisor's own two seams became real:
+    # refine, FlightAgent, AccommodationAgent, compose.
+    parser.add_argument("--max-llm-calls", type=int, default=80)
     parser.add_argument("--output", type=Path,
                         default=REPO_ROOT / "live-test-output" / "search_agents_live.json")
     args = parser.parse_args()
@@ -142,13 +144,22 @@ def main() -> int:
 
     selected = list(CASES.values()) if args.all else [CASES[args.scenario]]
     runs = []
-    for case in selected:
-        guard_budget(llm.usage["calls"], args.max_llm_calls)
-        print(f"--- {case['case_id']} (llm calls so far: {llm.usage['calls']})", flush=True)
-        runs.append(run_case(case))
+    stopped = None
+    # Every scenario is written out even if the run stops early. A ceiling hit once
+    # discarded ~40 calls' worth of paid results because the bundle was only saved
+    # at the end, which is a poor way to treat a $13 budget.
+    try:
+        for case in selected:
+            guard_budget(llm.usage["calls"], args.max_llm_calls)
+            print(f"--- {case['case_id']} (llm calls so far: {llm.usage['calls']})", flush=True)
+            runs.append(run_case(case))
+    except RuntimeError as exc:
+        stopped = str(exc)
+        print(f"!!! stopping early: {exc}", flush=True)
 
     bundle = {"started_at": datetime.now().astimezone().isoformat(),
               "model": llm.TEXT_MODEL, "runs": runs, "chat_usage": dict(llm.usage),
+              "stopped_early": stopped,
               "flight_cache_entries": len(flights._cache),
               "hotel_cache_entries": len(hotels._cache)}
 
@@ -158,8 +169,9 @@ def main() -> int:
 
     print(json.dumps({"output": str(output), "scenarios": len(runs),
                       "chat_usage": bundle["chat_usage"],
+                      "stopped_early": stopped,
                       "errors": [r["scenario"] for r in runs if r["status"] != "ok"]}, indent=2))
-    return 0
+    return 1 if stopped else 0
 
 
 if __name__ == "__main__":

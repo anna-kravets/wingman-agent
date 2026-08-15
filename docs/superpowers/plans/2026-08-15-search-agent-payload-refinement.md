@@ -1064,9 +1064,15 @@ today no matter how good the agents get."
 
 ---
 
-### Task 5: Prove it live
+### Task 5: Prove it live — DEFERRED 15/8/2026
 
 **Files:** none — verification only.
+
+> **Deferred, deliberately.** The estimate in this plan (~15–20 calls) predated Person A's
+> Supervisor seams becoming real LLM calls, which took a scenario from 2 calls to 4 and the full
+> matrix from ~20 to ~64. A first attempt hit the ceiling and stopped. Rather than spend that
+> twice, the live run waits until her `_digest` rewrite lands so one run proves both halves.
+> Until then the refinement is unit-tested but not validated against a real model.
 
 - [ ] **Step 1: Re-run the scenario matrix**
 

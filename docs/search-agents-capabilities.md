@@ -93,6 +93,14 @@ something in one run of two is not a safety net.
 Two deprecated fields (`area`, `meals_included`) carry the old shape until Person A's `_digest`
 rewrite lands, so there is no window in which the passenger sees less than before.
 
+> **Not live-verified yet.** Everything in §1 was measured against a real model; this refinement
+> was not. It is covered by 224 unit tests, including `facts_from_candidates` against synthetic
+> artifacts and every caveat rule, but the refined prompts have never met the model. The live run
+> was deferred on 15/8: since the Supervisor's seams became real LLM calls, a full 16-scenario run
+> costs ~64 calls rather than the ~20 it used to, and it made more sense to spend that once, after
+> Person A's digest lands, and prove both halves together. **Treat §2c as designed and unit-tested,
+> not as validated.**
+
 ### 2b. The degradation behaviour was wrong and has been reversed
 
 The design said that when the data source fails, the agents should fall back to LLM-invented
