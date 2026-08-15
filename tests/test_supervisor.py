@@ -639,6 +639,19 @@ def test_the_composing_prompt_says_who_it_is():
     assert "Wingman" in compose["system_prompt"]
 
 
+def test_the_composing_prompt_tells_the_model_not_to_repeat_a_follow_up():
+    # The bug this pins: a follow-up used to get the same "write a fresh plan" system
+    # prompt as turn one, so the model re-derived and restated everything it had
+    # already said — even though its own earlier reply is right there in the history
+    # block it can see.
+    history = [{"prompt": COMPLETE, "response": "a plan"}]
+    _, steps, _ = supervisor.run("anything earlier than the 04:25?", history)
+    compose = [s for s in steps if s["module"] == "Supervisor"][-1]["prompt"]
+
+    assert "do not restate facts, figures, or entitlements" in compose["system_prompt"]
+    assert "Earlier in this conversation:" in compose["user_prompt"]
+
+
 # --- caveats ---
 
 

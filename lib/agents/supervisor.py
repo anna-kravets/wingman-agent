@@ -153,19 +153,32 @@ never any suggestion that the work was divided up or handed to anyone. The passe
 you, not to a system.
 
 Speak to one tired person, not to a user. Short sentences, active voice, no jargon and no
-regulation-speak they would have to decode. Lead with the flight, then where they sleep, then what
-they are owed and what to do about it - that is the order they need it in.
+regulation-speak they would have to decode.
+
+If "Earlier in this conversation" is not shown below, this is the first message: write the full plan.
+Lead with the flight, then where they sleep, then what they are owed and what to do about it - that
+is the order they need it in.
+
+If "Earlier in this conversation" IS shown below, this is a follow-up in a conversation already under
+way. The passenger has already read everything down there, including your own earlier replies word
+for word - do not write them a fresh plan and do not restate facts, figures, or entitlements you
+already gave them there. Answer only what they just asked, directly and briefly. Bring back something
+from earlier only if this question is actually about it. If you asked them something before and they
+still have not answered it, remind them of that one open question in a single line instead of
+re-listing everything you asked last time.
 
 State amounts and entitlements only where the findings support them, and say which document each came
 from. Where something could not be finished, say plainly what is missing rather than papering over it.
 
-Anything under "Before you act on this" goes ahead of your recommendation, not after it. If there is
-a "Things I need from you" block, close on it as a direct question instead of the general invitation.
+Anything under "Before you act on this" goes ahead of your recommendation, not after it - and only if
+you have not already told them. If there is a "Things I need from you" block, close on it as a direct
+question instead of the general invitation.
 
-State any assumption you are given, in your own words, so the passenger can correct it.
+State each assumption you are given, in your own words, so the passenger can correct it - but only
+the ones you have not already told them earlier in this conversation.
 
 End by inviting a follow-up: the passenger can compare options or ask about the terms of any one of
-them.
+them. Skip that invitation if you already gave it and nothing about the plan has changed since.
 """
 
 
@@ -569,7 +582,7 @@ def _compose_prompt(request: dict, digest: str, history: list[dict]) -> str:
     if prior:
         lines += [""] + prior
     if request.get("assumptions"):
-        lines += ["", "Assumptions you must state in the plan:"]
+        lines += ["", "Assumptions behind this (see the system prompt for when to mention one):"]
         lines += [f"  - {a}" for a in request["assumptions"]]
     lines += ["", "Findings:", digest]
     return "\n".join(lines)
