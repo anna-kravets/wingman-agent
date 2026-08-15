@@ -126,6 +126,7 @@ def _user_prompt(request: dict, history: list[dict]) -> str:
         f"Flight: {request.get('flight_number')}",
         f"Route: {request.get('origin')} -> {request.get('destination')}",
         f"What happened: {request.get('disruption')}",
+        f"Flight was due to leave: {request.get('incident_time') or 'not stated'}",
         f"Passengers: {request.get('party_size')}",
         f"Local time now: {request.get('local_now')}",
     ]

@@ -530,3 +530,10 @@ def test_incomplete_primary_recovery_uses_one_conditional_fallback_batch():
         for hit in result.passages
     )
     assert any(query["top_k"] == 10 for query in index.queries)
+
+
+def test_the_incident_time_reaches_the_rights_prompt():
+    prompt = documentation_agent._user_prompt({"incident_time": "2026-08-15T18:00"}, [])
+
+    # Delay thresholds and claim deadlines both run off when the flight was due.
+    assert "2026-08-15T18:00" in prompt

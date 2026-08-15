@@ -54,12 +54,17 @@ and list it in "missing".
 Return a JSON object only, no prose:
 {"airline", "flight_number", "origin", "destination",
  "disruption": "delayed" | "cancelled" | "denied_boarding" | null,
- "stranded_at", "party_size", "arrive_by", "needs": ["flight", "stay", "rights"],
+ "stranded_at", "party_size", "arrive_by", "incident_time",
+ "needs": ["flight", "stay", "rights"],
  "missing": [field names]}
 
 "stranded_at" is an airport, not a place inside one — give its IATA code where you can work it
 out. If they were stopped before leaving, repeat the same code you put in "origin"; never write
 the word "origin" itself.
+
+"incident_time" is when the disrupted flight was scheduled to leave, in ISO 8601. Give it whenever
+the passenger says or implies it, resolving relative words against the current date and time you are
+given. Leave it null if they did not say - it is useful, not required.
 
 On a first message "needs" is ["flight", "stay", "rights"]. Leave one out only when the
 passenger rules it out in words — "I don't need a hotel", "I just want to know what I'm owed".
@@ -171,7 +176,8 @@ def _request_from(parsed: dict, follow_up: bool, local_now: str) -> dict:
     request = {
         field: _text(parsed.get(field))
         for field in (
-            "airline", "flight_number", "origin", "destination", "stranded_at", "arrive_by"
+            "airline", "flight_number", "origin", "destination", "stranded_at",
+            "arrive_by", "incident_time",
         )
     }
     disruption = _text(parsed.get("disruption"))

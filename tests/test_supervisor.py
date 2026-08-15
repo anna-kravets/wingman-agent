@@ -307,5 +307,20 @@ def test_without_a_clock_the_server_time_is_used():
     assert f"Local time now: {date.today().isoformat()}" in flight["prompt"]["user_prompt"]
 
 
+def test_the_incident_time_survives_extraction():
+    request = supervisor._request_from(
+        {"incident_time": "2026-08-15T18:00"}, False, "2026-08-15T22:15:00")
+
+    assert request["incident_time"] == "2026-08-15T18:00"
+
+
+def test_an_absent_incident_time_is_none_not_missing():
+    request = supervisor._request_from({}, False, "2026-08-15T22:15:00")
+
+    # It is useful, not required: a passenger who cannot say when is still helped.
+    assert request["incident_time"] is None
+    assert "incident_time" not in request["missing"]
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))
