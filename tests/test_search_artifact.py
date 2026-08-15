@@ -48,14 +48,15 @@ def artifact_with(flight_options, hotel_options, flight_prompt_text=None,
     return {"status": "ok", "response": response, "steps": steps}
 
 
-GOOD_FLIGHT = {"id": "F1", "airline": "Lufthansa", "flight_number": "LH 687",
-               "origin": "TLV", "destination": "FRA",
+GOOD_FLIGHT = {"id": "F1", "airline": "Lufthansa", "airline_iata": "LH",
+               "flight_number": "LH 687", "origin": "TLV", "destination": "FRA",
                "depart": "2026-08-11T16:30+03:00", "arrive": "2026-08-11T20:10+02:00",
-               "stops": 0, "fare_conditions": "See your Contract of Carriage.",
-               "notes": "Nonstop."}
-GOOD_HOTEL = {"id": "H1", "name": "Airport Plaza", "area": "2.4 km from the terminal",
+               "terminal": "3", "aircraft": "Airbus A320", "status": "Expected",
+               "rebooking": "See your Contract of Carriage.", "notes": "Nonstop."}
+GOOD_HOTEL = {"id": "H1", "name": "Airport Plaza", "distance_km": 2.4, "city": "Lod",
+              "area": "2.4 km from the terminal, Lod",
               "check_in": "2026-08-10", "check_out": "2026-08-11", "nights": 1,
-              "price_estimate": "Roughly EUR 120 (estimate)", "meals_included": False,
+              "price_estimate": "Roughly EUR 120 (estimate)", "meals": "unknown",
               "notes": "Meals not confirmed - check at the desk."}
 
 
@@ -139,20 +140,20 @@ def test_price_honesty_fails_on_an_unhedged_figure():
 
 
 def test_no_asserted_fare_fails_when_flightagent_quotes_money():
-    quoting = dict(GOOD_FLIGHT, fare_conditions="Rebooking costs EUR 90.")
+    quoting = dict(GOOD_FLIGHT, rebooking="Rebooking costs EUR 90.")
     results = evaluate(artifact_with([quoting], [GOOD_HOTEL]), case_with("no_asserted_fare"))
     assert status_of(results, "no_asserted_fare") == "fail"
 
 
 def test_meals_honesty_fails_when_meals_are_claimed_without_evidence():
-    claimed = dict(GOOD_HOTEL, meals_included=True, notes="Breakfast included.")
+    claimed = dict(GOOD_HOTEL, meals="included", notes="Breakfast included.")
     results = evaluate(artifact_with([GOOD_FLIGHT], [claimed]), case_with("meals_honesty"))
     assert status_of(results, "meals_honesty") == "fail"
 
 
 def test_meals_honesty_passes_when_the_candidate_data_supports_it():
     art = artifact_with(
-        [GOOD_FLIGHT], [dict(GOOD_HOTEL, meals_included=True, notes="Breakfast from 05:30.")],
+        [GOOD_FLIGHT], [dict(GOOD_HOTEL, meals="included", notes="Breakfast from 05:30.")],
         hotel_prompt_text=hotel_prompt(
             candidates=[dict(HOTEL_CANDIDATES[0], breakfast="yes")]),
     )
@@ -294,3 +295,27 @@ def test_history_reached_agents_fails_when_one_agent_missed_it():
     art = artifact_with([GOOD_FLIGHT], [GOOD_HOTEL],
                         flight_prompt_text=flight_prompt() + earlier)
     assert status_of(evaluate(art, with_history), "history_reached_agents") == "fail"
+
+
+# --- the enrichment guard --------------------------------------------------------
+
+
+def test_facts_from_candidates_passes_when_they_agree():
+    results = evaluate(artifact_with([GOOD_FLIGHT], [GOOD_HOTEL]),
+                       case_with("facts_from_candidates"))
+    assert status_of(results, "facts_from_candidates") == "pass"
+
+
+def test_facts_from_candidates_catches_a_drifted_time():
+    # If a refactor ever lets model output through again, it surfaces here rather
+    # than in a hotel booked for the wrong night.
+    drifted = dict(GOOD_FLIGHT, depart="2026-08-11T09:00+03:00")
+    results = evaluate(artifact_with([drifted], [GOOD_HOTEL]),
+                       case_with("facts_from_candidates"))
+    assert status_of(results, "facts_from_candidates") == "fail"
+
+
+def test_meals_honesty_accepts_unknown():
+    results = evaluate(artifact_with([GOOD_FLIGHT], [GOOD_HOTEL]),
+                       case_with("meals_honesty"))
+    assert status_of(results, "meals_honesty") == "pass"

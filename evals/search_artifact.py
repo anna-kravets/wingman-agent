@@ -206,8 +206,8 @@ def _check_no_asserted_fare(artifact, case):
     if not step:
         return _result("no_asserted_fare", True, "FlightAgent was not dispatched", skip=True)
     # FlightAgent has no fare data at all, so any money figure it prints is invented.
-    quoting = [f"{o.get('id')}: {o.get('fare_conditions')}" for o in _options(step)
-               if MONEY.search(str(o.get("fare_conditions", "")) + str(o.get("notes", "")))]
+    quoting = [f"{o.get('id')}: {o.get('rebooking')}" for o in _options(step)
+               if MONEY.search(str(o.get("rebooking", "")) + str(o.get("notes", "")))]
     return _result("no_asserted_fare", not quoting,
                    f"quoted money: {quoting}" if quoting else "no fares asserted")
 
@@ -221,11 +221,12 @@ def _check_meals_honesty(artifact, case):
     problems = []
     for option in _options(step):
         candidate = candidates.get(_normalise(option.get("name")))
-        if option.get("meals_included"):
+        meals = str(option.get("meals", "unknown")).lower()
+        if meals == "included":
             if not (candidate and candidate.get("breakfast")):
                 problems.append(f"{option.get('id')} claims meals with no supporting tag")
-        elif "confirm" not in str(option.get("notes", "")).lower():
-            problems.append(f"{option.get('id')} does not say meals were unconfirmed")
+        elif meals not in ("not_included", "unknown"):
+            problems.append(f"{option.get('id')} has meals={meals!r}")
     return _result("meals_honesty", not problems, "; ".join(problems) or "meals stated honestly")
 
 
@@ -274,6 +275,39 @@ def _check_no_unusable_status(artifact, case):
                    else f"all {len(_options(step))} options are catchable")
 
 
+FACTS_FROM_CANDIDATE = {"airline": "airline", "depart": "depart", "arrive": "arrive",
+                        "origin": "origin", "destination": "destination",
+                        "terminal": "terminal", "aircraft": "aircraft", "status": "status"}
+
+
+def _check_facts_from_candidates(artifact, case):
+    """Every factual field must equal its source. The model no longer supplies these.
+
+    Guards the enrichment: if a rename or refactor ever lets model output through
+    again, a drifted departure time shows up here rather than in a hotel booked
+    for the wrong night.
+    """
+    step = _step(artifact, "FlightAgent")
+    if not step:
+        return _result("facts_from_candidates", True, "FlightAgent was not dispatched", skip=True)
+    candidates = {_normalise(c.get("flight")): c
+                  for c in candidates_from_prompt(step["prompt"]["user_prompt"])}
+    if not candidates:
+        return _result("facts_from_candidates", True, "no candidates to compare", skip=True)
+
+    drifted = []
+    for option in _options(step):
+        candidate = candidates.get(_normalise(option.get("flight_number")))
+        if not candidate:
+            continue
+        for field, source in FACTS_FROM_CANDIDATE.items():
+            if field in option and option[field] != candidate.get(source):
+                drifted.append(f"{option.get('id')}.{field}")
+    return _result("facts_from_candidates", not drifted,
+                   f"drifted from source: {drifted}" if drifted
+                   else "every fact matches its candidate")
+
+
 def _check_deferral(artifact, case):
     step = _step(artifact, "FlightAgent")
     if not step:
@@ -311,6 +345,7 @@ CHECKS = {
     "meals_honesty": _check_meals_honesty,
     "degraded_refusal": _check_degraded_refusal,
     "no_unusable_status": _check_no_unusable_status,
+    "facts_from_candidates": _check_facts_from_candidates,
     "deferral": _check_deferral,
     "history_reached_agents": _check_history_reached_agents,
 }

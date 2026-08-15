@@ -16,39 +16,31 @@ from lib.tools import flights, hotels
 
 
 def _flight_response(user_prompt: str) -> dict:
-    depart = (datetime.now() + timedelta(days=1)).replace(
-        hour=9, minute=40, second=0, microsecond=0)
+    """Only the model's half: the agent fills the facts from the candidate.
+
+    The flight number must match fake_search_data's candidate, which is why this
+    fake got shorter rather than longer when the payload grew.
+    """
     return {
         "options": [{
-            "id": "F1", "airline": "Lufthansa", "flight_number": "LH 687",
-            "origin": "TLV", "destination": "FRA",
-            "depart": depart.isoformat(),
-            "arrive": (depart + timedelta(hours=3, minutes=25)).isoformat(),
-            "stops": 0,
-            "fare_conditions": "Rebooking terms come from your Contract of Carriage.",
+            "id": "F1", "flight_number": "LH 687",
+            "rebooking": "Rebooking terms come from your Contract of Carriage.",
             "notes": "Earliest nonstop.",
         }],
         "recommended_id": "F1",
+        "caveats": [],
     }
 
 
 def _accommodation_response(user_prompt: str) -> dict:
-    fields = {}
-    for line in user_prompt.splitlines():
-        if ":" in line:
-            label, _, value = line.partition(":")
-            fields[label.strip()] = value.strip()
     return {
         "options": [{
-            "id": "H1", "name": "Airport Plaza", "area": "8 minutes from the terminal",
-            "check_in": fields.get("Check in", "2026-08-09"),
-            "check_out": fields.get("Check out", "2026-08-10"),
-            "nights": int(fields.get("Nights", "1") or 1),
+            "id": "H1", "name": "Airport Plaza",
             "price_estimate": "EUR 120 total (estimate)",
-            "meals_included": False,
             "notes": "Meals not confirmed — check at the desk.",
         }],
         "recommended_id": "H1",
+        "caveats": [],
     }
 
 

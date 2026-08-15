@@ -22,6 +22,7 @@ CHECK_NAMES = {
     "no_asserted_fare",
     "meals_honesty",
     "no_unusable_status",
+    "facts_from_candidates",
     "degraded_refusal",
     "deferral",
     "history_reached_agents",
