@@ -11,50 +11,61 @@ price and meals are estimates and must be labelled as such (design doc D8).
 """
 
 import json
-from datetime import date
+import re
 
 from lib import llm
 from lib.tools import hotels
 
 MODULE = "AccommodationAgent"
 
+FAR_FROM_TERMINAL_KM = 15.0
+MEALS_FROM_TAG = {"yes": "included", "no": "not_included"}
+
 SYSTEM_PROMPT = """You find somewhere for a stranded air passenger to sleep, for a fixed set of nights.
 
-You are given a list of REAL hotels near the airport, with the exact distance to the terminal.
-Choose only from that list and never invent a property or change its name.
+You are given a list of REAL places near the airport. Choose only from that list. Give each name
+exactly as it appears so it can be matched; everything factual - distance, address, phone, website,
+accessibility, and the nights themselves - is filled in from the source data afterwards. Spend your
+effort on which places to offer, in what order, and why.
 
-The nights are given to you and are NOT negotiable — they come from the replacement flight the
-passenger is taking. Every option must use exactly the check-in and check-out dates you are given.
+The nights are not yours to choose. They come from the replacement flight the passenger is taking.
 
-You do not book, hold or pay for anything. You propose options the passenger acts on themselves.
-Never name a booking website.
+You do not book, hold or pay for anything. Never name a booking website.
 
-Prioritise, in order: close enough to reach the airport for the departure, then anything the data
-tells you about the property.
+Prioritise being close enough to reach the airport for the departure, then whatever the data says
+about the place.
 
-You do NOT know prices, availability, or whether meals are included — that information is not in
-your source. "price_estimate" must read as an estimate. Set "meals_included" to true only if the
-data explicitly says so; otherwise set it false and say in "notes" that meals were not confirmed
-and to check at the desk. Never assert a fact about a real named business that you were not given.
+You do NOT know prices, availability, or whether meals are included. "price_estimate" must read as
+an estimate and never as a quote. If a candidate has a phone number, say in "notes" that the
+passenger should call to confirm the room and the rate - that is the one way to settle the two
+things you cannot. Say plainly when somewhere is a hostel, guest house or apartment rather than a
+hotel, because it changes what to expect. Never assert a fact about a real named business that you
+were not given.
 
 Return a JSON object only, no prose:
-{"options": [{"id", "name", "area", "check_in", "check_out", "nights",
-              "price_estimate", "meals_included", "notes"}],
- "recommended_id": "<id>"}
+{"options": [{"id", "name", "price_estimate", "notes"}],
+ "recommended_id": "<id>",
+ "caveats": [str]}
+
+"caveats" is for the assistant coordinating this plan, not the passenger. Each entry starts with
+"NOTE:", "ASK:" or "CONFIRM:". Leave it empty if you have nothing to add; the obvious ones are
+added automatically.
 
 Example
 -------
-Hotels: [{"name": "Airport Plaza", "distance_km": 2.4, "stars": "4", "breakfast": null, "area": "Lod"},
-         {"name": "City Central Inn", "distance_km": 11.2, "stars": null, "breakfast": null, "area": "Tel Aviv"}]
+Hotels: [{"name": "Airport Plaza", "distance_km": 2.4, "area": "Lod", "stars": "4", "phone": "+972 3 000 0000", "address": "12 HaNasi", "wheelchair": "yes"},
+         {"name": "City Central Inn", "distance_km": 11.2, "area": "Tel Aviv", "kind": "hostel"}]
 Request: 2 guests stranded at TLV, check in 2026-08-09, check out 2026-08-10, 1 night, onward flight departs 2026-08-10T09:40.
 Response:
-{"options": [{"id": "H1", "name": "Airport Plaza", "area": "2.4 km from the terminal, Lod", "check_in": "2026-08-09", "check_out": "2026-08-10", "nights": 1, "price_estimate": "Roughly EUR 110-140 for the night (estimate - not a quoted price)", "meals_included": false, "notes": "Closest to the terminal, which matters for an 09:40 departure. Meals were not confirmed - ask at the desk, and keep the receipt if you are claiming care costs back."}, {"id": "H2", "name": "City Central Inn", "area": "11.2 km from the terminal, Tel Aviv", "check_in": "2026-08-09", "check_out": "2026-08-10", "nights": 1, "price_estimate": "Roughly EUR 80-100 for the night (estimate - not a quoted price)", "meals_included": false, "notes": "Cheaper but 11 km out, so leave a clear hour to get back for the flight. Meals not confirmed."}],
- "recommended_id": "H1"}
+{"options": [{"id": "H1", "name": "Airport Plaza", "price_estimate": "Roughly EUR 110-140 for the night (estimate - not a quoted price)", "notes": "Closest to the terminal, which matters for an 09:40 departure. Call them to confirm a room and the rate - I cannot check either."}, {"id": "H2", "name": "City Central Inn", "price_estimate": "Roughly EUR 40-70 for the night (estimate - not a quoted price)", "notes": "A hostel rather than a hotel, so expect shared facilities. Cheaper, but 11 km out - leave a clear hour to get back for the flight."}],
+ "recommended_id": "H1",
+ "caveats": []}
 """
 
-DEGRADED_NOTE = (
-    "No live hotel data was available for this airport. Propose plausible options from your own "
-    "knowledge, and put 'Illustrative option - not live availability.' in the notes of every one."
+NO_LIVE_DATA = (
+    "no hotels could be found near this airport in OpenStreetMap, so nothing could be "
+    "verified. Nothing was invented - ask at the airline's desk, which is also where a "
+    "hotel voucher would be issued if you are owed one."
 )
 
 
@@ -69,11 +80,8 @@ def _user_prompt(request: dict, stay_window: dict, history: list[dict],
         f"Onward flight departs: {stay_window.get('departs')}",
         "",
     ]
-    if candidates:
-        lines.append("Hotels (real, near the airport - choose only from these):")
-        lines.append(json.dumps(candidates, ensure_ascii=False))
-    else:
-        lines.append(DEGRADED_NOTE)
+    lines.append("Hotels (real, near the airport - choose only from these):")
+    lines.append(json.dumps(candidates, ensure_ascii=False))
 
     if history:
         lines.append("")
@@ -84,37 +92,101 @@ def _user_prompt(request: dict, stay_window: dict, history: list[dict],
     return "\n".join(lines)
 
 
-def _validate(payload: dict, stay_window: dict) -> dict:
-    """Drop options that do not match the nights the Supervisor derived.
+def _normalise(text) -> str:
+    return re.sub(r"\s+", "", str(text or "")).upper()
 
-    Booking the wrong nights is the one failure that leaves the passenger worse
-    off than no answer at all, so a mismatch is dropped rather than reported.
+
+def _match(option: dict, candidates: list[dict]) -> dict | None:
+    wanted = _normalise(option.get("name"))
+    return next((c for c in candidates if _normalise(c.get("name")) == wanted), None)
+
+
+def _area_text(candidate: dict) -> str | None:
+    """The human phrasing `supervisor._digest` still reads. Deprecated with `area`."""
+    distance, city = candidate.get("distance_km"), candidate.get("area")
+    if distance is None:
+        return city
+    return f"{distance} km from the terminal" + (f", {city}" if city else "")
+
+
+def _enrich(option: dict, candidate: dict, stay_window: dict) -> dict:
+    """Facts from OpenStreetMap, nights from the Supervisor, prose from the model."""
+    meals = MEALS_FROM_TAG.get(str(candidate.get("breakfast", "")).lower(), "unknown")
+    enriched = {
+        "id": option.get("id"),
+        "name": candidate.get("name"),
+        "kind": candidate.get("kind"),          # absent when it is an ordinary hotel
+        "distance_km": candidate.get("distance_km"),
+        "city": candidate.get("area"),
+        # Deprecated (spec P7): supervisor._digest reads `area` and would otherwise
+        # lose the distance entirely. Delete once it reads distance_km and city.
+        "area": _area_text(candidate),
+        "address": candidate.get("address"),
+        "phone": candidate.get("phone"),
+        "website": candidate.get("website"),
+        "stars": candidate.get("stars"),
+        "wheelchair": candidate.get("wheelchair"),
+        "check_in": stay_window.get("check_in"),
+        "check_out": stay_window.get("check_out"),
+        "nights": stay_window.get("nights"),
+        "price_estimate": option.get("price_estimate"),
+        "meals": meals,
+        # Deprecated (spec P7): absent reads as falsy in _digest, which would assert
+        # "no meals" where the truth is "unknown". Delete with `area`.
+        "meals_included": meals == "included",
+        "notes": option.get("notes"),
+    }
+    return {key: value for key, value in enriched.items() if value is not None}
+
+
+def _caveats(options: list[dict]) -> list[str]:
+    """The ones whose trigger is a fact, decided here rather than by the model."""
+    said = ["NOTE: every price here is an estimate, not a quote - nothing was checked "
+            "against the property."]
+
+    if not any(o.get("phone") for o in options):
+        said.append("ASK: none of these has a phone number listed, so nobody can confirm a room "
+                    "tonight - the passenger may prefer to ask the airline desk instead.")
+
+    nearest = min((o["distance_km"] for o in options if o.get("distance_km") is not None),
+                  default=None)
+    if nearest is not None and nearest > FAR_FROM_TERMINAL_KM:
+        said.append(f"CONFIRM: the nearest option is {nearest} km from the terminal - check the "
+                    f"passenger can still make the departure.")
+
+    if all(o.get("kind") for o in options):
+        said.append("NOTE: no ordinary hotels were found near this airport - these are hostels, "
+                    "guest houses or apartments.")
+
+    return said
+
+
+def _validate(payload: dict, stay_window: dict, candidates: list[dict]) -> dict:
+    """Keep only options naming a real property, and fill their facts from it.
+
+    The nights come from the stay window the Supervisor derived from the flight,
+    not from the model, so they cannot disagree with the flight that produced them.
     """
     if not isinstance(payload, dict):
         raise ValueError("expected a JSON object")
-
-    wanted_in = stay_window.get("check_in")
-    wanted_out = stay_window.get("check_out")
 
     usable = []
     for option in payload.get("options") or []:
         if not isinstance(option, dict) or not option.get("id"):
             continue
-        try:
-            date.fromisoformat(option.get("check_in") or "")
-            date.fromisoformat(option.get("check_out") or "")
-        except (TypeError, ValueError):
-            continue
-        if option["check_in"] != wanted_in or option["check_out"] != wanted_out:
-            continue
-        usable.append(option)
+        candidate = _match(option, candidates)
+        if candidate:
+            usable.append(_enrich(option, candidate, stay_window))
 
     if not usable:
-        raise ValueError("no option came back on the nights the flight implies")
+        raise ValueError("no option named a place that was actually offered")
 
-    payload["options"] = usable
     if payload.get("recommended_id") not in {o["id"] for o in usable}:
         payload["recommended_id"] = usable[0]["id"]
+
+    model_caveats = [str(c) for c in (payload.get("caveats") or []) if str(c).strip()]
+    payload["options"] = usable
+    payload["caveats"] = _caveats(usable) + model_caveats
     return payload
 
 
@@ -122,11 +194,16 @@ def run(request: dict, stay_window: dict, history: list[dict]) -> tuple[dict, li
     """Returns (payload, steps). See `docs/PROJECT_PLAN.md` §1 for both shapes."""
     candidates = hotels.search(request.get("stranded_at"))
 
+    if not candidates:
+        # Same reasoning as FlightAgent: no verified property, no invention, no LLM call.
+        # A named hotel that does not exist sends a tired passenger to the wrong place.
+        raise llm.LLMError(f"{MODULE}: {NO_LIVE_DATA}", steps=[])
+
     payload, step = llm.call(
         MODULE, SYSTEM_PROMPT,
         _user_prompt(request, stay_window, history, candidates), expect_json=True
     )
     try:
-        return _validate(payload, stay_window), [step]
+        return _validate(payload, stay_window, candidates), [step]
     except ValueError as exc:
         raise llm.LLMError(f"{MODULE}: {exc}", steps=[step]) from exc

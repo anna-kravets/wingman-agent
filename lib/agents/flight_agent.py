@@ -10,6 +10,7 @@ DocumentationAgent, which can cite the Contract of Carriage clause.
 """
 
 import json
+import re
 from datetime import datetime
 
 from lib import llm
@@ -17,34 +18,42 @@ from lib.tools import flights
 
 MODULE = "FlightAgent"
 
+MIN_FOR_CHOICE = 3            # fewer than this and the passenger has no real choice
+NEAR_DEPARTURE_MINUTES = 90   # below this, they may not make the gate
+
 SYSTEM_PROMPT = """You choose onward flights for a passenger whose flight has just been disrupted.
 
 You are given a list of REAL flights, already verified as departing from the passenger's airport to
-their destination. Choose only from that list. Never invent a flight, and never alter a time, flight
-number or airline.
+their destination and as still catchable. Choose only from that list.
 
-You do not book, hold or pay for anything — you propose options the passenger acts on themselves.
+You do not copy the flight's details. Give the flight number exactly as it appears in the candidate
+so it can be matched, and everything factual - times, terminal, aircraft, airline - is filled in
+from the source data afterwards. Spend your effort on which flights to offer and why.
+
+You do not book, hold or pay for anything - you propose options the passenger acts on themselves.
 Include flights on other airlines: the passenger's Contract of Carriage may entitle them to be
 rebooked on a competitor, so do not silently drop them. Never name a booking or flight-search website.
 
-Return at most three options. Prefer the earliest arrival that meets any deadline given; where they
-differ meaningfully, include one that is gentler on conditions.
+Return at most three options, best first. Prefer the earliest arrival that meets any deadline given;
+where they differ meaningfully, include one that is gentler on conditions.
 
 You have schedule data ONLY. You do not know fares, seat availability, baggage allowances, or what
-the airline owes this passenger. Never state a price as fact, and never state a baggage or
-compensation rule — those come from the passenger's Contract of Carriage and are handled elsewhere
-in the plan. Use "fare_conditions" to point there, not to assert terms.
+the airline owes this passenger. Never state a price, and never state a baggage or compensation
+rule - those come from the Contract of Carriage and are handled elsewhere in the plan. Use
+"rebooking" to say how hard this flight is likely to be to get moved onto, and to point there.
 
 Only direct flights are available to you. If none suits, say so in "notes" rather than inventing a
 connection.
 
 Return a JSON object only, no prose:
-{"options": [{"id", "airline", "flight_number", "origin", "destination", "depart", "arrive",
-              "stops", "fare_conditions", "notes"}],
- "recommended_id": "<id>"}
+{"options": [{"id", "flight_number", "rebooking", "notes"}],
+ "recommended_id": "<id>",
+ "caveats": [str]}
 
-"depart" and "arrive" must be copied exactly from the candidate you chose, in ISO 8601 local time.
-They decide which nights the passenger is stranded, so an altered time books the wrong hotel.
+"caveats" is for the assistant coordinating this plan, not the passenger. Each entry starts with
+"NOTE:" for something they should be told, "ASK:" for something only the passenger can answer, or
+"CONFIRM:" for something that should not proceed unchecked. Leave it empty if you have nothing to
+add; the obvious ones are added automatically.
 
 Example
 -------
@@ -53,13 +62,15 @@ Candidates:
  {"flight": "LH 687", "airline": "Lufthansa", "airline_iata": "LH", "origin": "TLV", "destination": "FRA", "depart": "2026-08-10T16:30+03:00", "arrive": "2026-08-10T20:10+02:00", "status": "Expected", "aircraft": "Airbus A320", "terminal": "3"}]
 Request: LH318 TLV->FRA cancelled, 2 adults, must arrive by the evening of 2026-08-10, local time now 2026-08-09T22:15.
 Response:
-{"options": [{"id": "F1", "airline": "El Al", "flight_number": "LY 357", "origin": "TLV", "destination": "FRA", "depart": "2026-08-10T06:05+03:00", "arrive": "2026-08-10T09:40+02:00", "stops": 0, "fare_conditions": "A different airline from the one that cancelled. Whether your ticket can be moved across is set by your Contract of Carriage - see the entitlements section.", "notes": "Earliest arrival, and it clears your deadline with the day to spare."}, {"id": "F2", "airline": "Lufthansa", "flight_number": "LH 687", "origin": "TLV", "destination": "FRA", "depart": "2026-08-10T16:30+03:00", "arrive": "2026-08-10T20:10+02:00", "stops": 0, "fare_conditions": "Same airline as the cancelled flight, which is usually the simplest rebooking to arrange at the desk.", "notes": "Later, but stays with your original carrier and still lands inside your deadline."}],
- "recommended_id": "F1"}
+{"options": [{"id": "F1", "flight_number": "LY 357", "rebooking": "A different airline from the one that cancelled. Whether your ticket can be moved across is set by your Contract of Carriage - see the entitlements section.", "notes": "Earliest arrival, and it clears your deadline with the day to spare."}, {"id": "F2", "flight_number": "LH 687", "rebooking": "Same airline as the cancelled flight, which is usually the simplest rebooking to arrange at the desk.", "notes": "Later, but stays with your original carrier and still lands inside your deadline."}],
+ "recommended_id": "F1",
+ "caveats": ["ASK: both options mean an overnight wait - check they are willing to stay tonight."]}
 """
 
-DEGRADED_NOTE = (
-    "No live schedule data was available for this route. Propose plausible options from your own "
-    "knowledge, and put 'Illustrative option - not live availability.' in the notes of every one."
+NO_LIVE_DATA = (
+    "live flight schedules were not available for this route, so no departure could be "
+    "verified. Nothing was invented - check your airline's app or the departures board for "
+    "the next flight."
 )
 
 
@@ -74,11 +85,8 @@ def _user_prompt(request: dict, history: list[dict], candidates: list[dict]) -> 
         f"Local time now: {request.get('local_now')}",
         "",
     ]
-    if candidates:
-        lines.append("Candidates (real, verified departures - choose only from these):")
-        lines.append(json.dumps(candidates, ensure_ascii=False))
-    else:
-        lines.append(DEGRADED_NOTE)
+    lines.append("Candidates (real, verified departures - choose only from these):")
+    lines.append(json.dumps(candidates, ensure_ascii=False))
 
     if history:
         lines.append("")
@@ -89,11 +97,85 @@ def _user_prompt(request: dict, history: list[dict], candidates: list[dict]) -> 
     return "\n".join(lines)
 
 
-def _validate(payload: dict) -> dict:
-    """Drop anything the Supervisor cannot use.
+def _normalise(text) -> str:
+    return re.sub(r"\s+", "", str(text or "")).upper()
 
-    `supervisor._stay_window` calls `datetime.fromisoformat` on "depart", so an
-    unparseable time costs the passenger the hotel as well as the flight.
+
+def _match(option: dict, candidates: list[dict]) -> dict | None:
+    wanted = _normalise(option.get("flight_number"))
+    return next((c for c in candidates if _normalise(c.get("flight")) == wanted), None)
+
+
+def _enrich(option: dict, candidate: dict) -> dict:
+    """Overwrite every factual field from the source. The model chose; it did not measure."""
+    depart = datetime.fromisoformat(candidate["depart"])
+    arrive = datetime.fromisoformat(candidate["arrive"]) if candidate.get("arrive") else None
+
+    enriched = {
+        "id": option.get("id"),
+        "airline": candidate.get("airline"),
+        "airline_iata": candidate.get("airline_iata"),
+        "flight_number": candidate.get("flight"),
+        "origin": candidate.get("origin"),
+        "destination": candidate.get("destination"),
+        "depart": candidate.get("depart"),
+        "arrive": candidate.get("arrive"),
+        "terminal": candidate.get("terminal"),
+        "aircraft": candidate.get("aircraft"),
+        "status": candidate.get("status"),
+        "rebooking": option.get("rebooking"),
+        "notes": option.get("notes"),
+    }
+    if arrive:
+        enriched["duration_minutes"] = round((arrive - depart).total_seconds() / 60)
+        # Local dates, because "arrives the next day" is what the passenger experiences.
+        enriched["arrives_next_day"] = arrive.date() > depart.date()
+    return {key: value for key, value in enriched.items() if value is not None}
+
+
+def _caveats(request: dict, options: list[dict], candidates: list[dict]) -> list[str]:
+    """The ones whose trigger is a fact.
+
+    Generated here rather than asked of the model: live validation caught it
+    flagging a departed flight in one run and ignoring it in the next, from
+    identical data. The Supervisor should not depend on it noticing.
+    """
+    said = []
+
+    if len(candidates) < MIN_FOR_CHOICE:
+        said.append(f"NOTE: only {len(candidates)} flight(s) were found on this route in the "
+                    f"next 48 hours, so there is little to choose between.")
+
+    original = _normalise(request.get("airline"))
+    if original and all(_normalise(o.get("airline_iata")) != original for o in options):
+        said.append("NOTE: every option is on a different airline from the one that cancelled, "
+                    "so the ticket may need endorsing over - the entitlements section covers it.")
+
+    now = datetime.fromisoformat(request["local_now"])
+    for option in options:
+        departs = datetime.fromisoformat(option["depart"]).replace(tzinfo=None)
+        minutes = round((departs - now).total_seconds() / 60)
+        if 0 <= minutes <= NEAR_DEPARTURE_MINUTES:
+            said.append(f"CONFIRM: {option['flight_number']} leaves in about {minutes} minutes - "
+                        f"check the passenger can reach the gate in time.")
+            break
+
+    if any(o.get("arrives_next_day") for o in options):
+        said.append("NOTE: at least one option arrives the day after it departs.")
+
+    delayed = [o["flight_number"] for o in options
+               if str(o.get("status", "")).lower() == "delayed"]
+    if delayed:
+        said.append(f"NOTE: {', '.join(delayed)} is already marked delayed.")
+
+    return said
+
+
+def _validate(payload: dict, request: dict, candidates: list[dict]) -> dict:
+    """Keep only options that name a real candidate, and fill their facts from it.
+
+    Grounding stops being a rule the model is asked to follow and becomes structural:
+    an invented flight matches nothing, so it cannot reach the passenger.
     """
     if not isinstance(payload, dict):
         raise ValueError("expected a JSON object")
@@ -102,32 +184,50 @@ def _validate(payload: dict) -> dict:
     for option in payload.get("options") or []:
         if not isinstance(option, dict) or not option.get("id"):
             continue
-        try:
-            datetime.fromisoformat(option.get("depart") or "")
-            datetime.fromisoformat(option.get("arrive") or "")
-        except (TypeError, ValueError):
-            continue
-        usable.append(option)
+        candidate = _match(option, candidates)
+        if candidate:
+            usable.append(_enrich(option, candidate))
 
     if not usable:
-        raise ValueError("no option came back with a usable departure time")
+        raise ValueError("no option named a flight that was actually offered")
 
-    payload["options"] = usable
     if payload.get("recommended_id") not in {o["id"] for o in usable}:
         payload["recommended_id"] = usable[0]["id"]
+
+    model_caveats = [str(c) for c in (payload.get("caveats") or []) if str(c).strip()]
+    payload["options"] = usable
+    payload["caveats"] = _caveats(request, usable, candidates) + model_caveats
     return payload
 
 
 def run(request: dict, history: list[dict]) -> tuple[dict, list[dict]]:
     """Returns (payload, steps). See `docs/PROJECT_PLAN.md` §1 for both shapes."""
+    origin, destination = request.get("origin"), request.get("destination")
+
+    # Decided offline and free: a route that cannot exist should not cost 8 units
+    # discovering that, and "live schedules were unavailable" is the wrong thing
+    # to tell someone who asked for TLV to TLV.
+    problem = flights.route_problem(origin, destination)
+    if problem:
+        raise llm.LLMError(f"{MODULE}: {problem}", steps=[])
+
     after = datetime.fromisoformat(request["local_now"])
-    candidates = flights.search(request.get("origin"), request.get("destination"), after)
+    candidates = flights.search(origin, destination, after)
+
+    if not candidates:
+        # No LLM call at all. With nothing verified to choose from, the only honest
+        # answer is that we do not know: a fabricated flight number for a real airline
+        # is actionable, and a stressed passenger may go and ask for it at the desk.
+        # Live validation on 10/8/2026 found the model refuses here anyway, which is
+        # why the earlier "degrade to labelled illustrative options" decision was
+        # reversed. `steps` is empty because no call was made.
+        raise llm.LLMError(f"{MODULE}: {NO_LIVE_DATA}", steps=[])
 
     payload, step = llm.call(
         MODULE, SYSTEM_PROMPT, _user_prompt(request, history, candidates), expect_json=True
     )
     try:
-        return _validate(payload), [step]
+        return _validate(payload, request, candidates), [step]
     except ValueError as exc:
         # The call happened, so the trace keeps it even though it was unusable.
         raise llm.LLMError(f"{MODULE}: {exc}", steps=[step]) from exc

@@ -116,7 +116,8 @@ another's.
 `AccommodationAgent` uses OpenStreetMap's Overpass API (keyless).
 
 Set `WINGMAN_LIVE_DATA=0` in your local `.env` while developing. Both tools then make no
-network requests at all and the agents degrade to reasoning unaided, clearly labelled.
+network requests at all, and the search agents then refuse rather than invent options:
+they make no model call and tell the passenger nothing could be verified.
 
 Check remaining quota (costs nothing):
 

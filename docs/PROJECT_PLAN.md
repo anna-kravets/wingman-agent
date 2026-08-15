@@ -71,15 +71,19 @@ how much of it reaches a prompt (§7).
 **Payloads** — the shapes the Supervisor reads. `depart`/`arrive` are ISO 8601 local times and are
 load-bearing: the date sync derives the hotel nights from the chosen flight's departure.
 ```python
-# FlightAgent
-{"options": [{"id", "airline", "flight_number", "origin", "destination",
-              "depart", "arrive", "stops", "fare_conditions", "notes"}],
- "recommended_id": "F1"}
+# FlightAgent   (facts written from the candidate, not the model)
+{"options": [{"id", "airline", "airline_iata", "flight_number", "origin", "destination",
+              "depart", "arrive", "duration_minutes", "arrives_next_day",
+              "terminal", "aircraft", "status", "rebooking", "notes"}],
+ "recommended_id": "F1",
+ "caveats": [str]}
 
 # AccommodationAgent
-{"options": [{"id", "name", "area", "check_in", "check_out", "nights",
-              "price_estimate", "meals_included", "notes"}],
- "recommended_id": "H1"}
+{"options": [{"id", "name", "kind", "distance_km", "city", "address", "phone", "website",
+              "stars", "wheelchair", "check_in", "check_out", "nights",
+              "price_estimate", "meals", "notes"}],
+ "recommended_id": "H1",
+ "caveats": [str]}
 
 # DocumentationAgent
 {"regulation": "EU 261/2004" | "US DOT" | "Israel Aviation Services Law" | "multiple" | "none",
@@ -89,6 +93,34 @@ load-bearing: the date sync derives the hotel nights from the chosen flight's de
 ```
 `source` on each entitlement is what makes the Contract of Carriage differentiator visible in the
 output — cite the clause, not just the regulation.
+
+**Changed 15/8/2026** (agreed at the team meeting; spec:
+`docs/superpowers/specs/2026-08-15-search-agent-payload-refinement-design.md`). For Person A,
+consuming these in `supervisor._digest`:
+
+- **`caveats`** is new on both search agents, `list[str]`, matching `DocumentationAgent`. Every
+  entry opens `NOTE:` (tell the passenger), `ASK:` (only the passenger can answer) or `CONFIRM:`
+  (do not proceed unchecked). The ones that matter are generated in code, not by the model, so
+  they are reliable enough to branch on.
+- **Renamed:** `fare_conditions` → `rebooking` (it never held fare data).
+- **Removed:** `stops` — permanently `0` once direct-only became a decision (D7). `_digest` never
+  read either, so neither removal affects it.
+- **New on flights:** `airline_iata`, `duration_minutes`, `arrives_next_day`, `terminal`,
+  `aircraft`, `status`.
+- **New on stays:** `kind` (present only when it is *not* an ordinary hotel), `distance_km`,
+  `city`, `address`, `phone`, `website`, `stars`, `wheelchair`. **`phone` is the most useful field
+  either agent has** — it is how the passenger settles the two things we cannot, a free room and a
+  real rate.
+- **Widened:** `meals_included: bool` → `meals: "included" | "not_included" | "unknown"`.
+  `unknown` is the honest answer nearly every time; `false` was a lie dressed as data.
+- **Two deprecated fields remain so nothing regresses before your rewrite lands:** `area` still
+  carries the human phrasing (`"2.4 km from the terminal, Lod"`) that `_digest` reads today, and
+  `meals_included` still exists as a boolean. **Delete both once `_digest` reads `distance_km`,
+  `city` and `meals`.**
+- **Optional fields are omitted, not null.** Read with `.get()`; absence means OpenStreetMap or
+  AeroDataBox did not know, which is worth saying rather than hiding.
+- **Every option is now worth forwarding.** `_digest` currently keeps only the recommended one,
+  which is why "compare the two options" cannot work today however good the agents get.
 
 ---
 
@@ -270,7 +302,11 @@ the abstract. Raise these at the first integration checkpoint and log whatever i
 | 9/8/2026 | Prices and seat availability are **LLM estimates, labelled as such** | No free source for either exists as of 8/2026. `/api/agent_info`'s `description` must say so (Phase 3). |
 | 9/8/2026 | A tool/HTTP fetch produces **no `steps[]` entry** | The spec ties `steps[]` to LLM calls, and a step's shape requires `prompt.system_prompt`/`user_prompt`, which an HTTP GET has neither of. The fetched data appears inside the agent's LLM `user_prompt` instead, so the trace still shows exactly what drove the answer. **Applies to Person C's Pinecone retrieval too.** |
 | 9/8/2026 | `FlightAgent` **defers baggage/fare/entitlement questions to `DocumentationAgent`** | Schedule data cannot answer what a ticket allows; the Contract of Carriage can, and with a clause citation — which is the project's differentiator. Corrects Phase 3's "ski bag" example and `CLAUDE.md` §3's "check terms", both of which asked FlightAgent for something it has no source for. |
-| 9/8/2026 | Data-source failure **degrades to LLM-only, labelled in `notes`** | The demo must survive an exhausted quota or a flaky Overpass during grading (the public instance returned a 504 during development). Mirrors `lib/conversation.py`'s posture on Supabase. |
+| 9/8/2026 | ~~Data-source failure **degrades to LLM-only, labelled in `notes`**~~ — **reversed 10/8/2026, see below** | The demo must survive an exhausted quota or a flaky Overpass during grading (the public instance returned a 504 during development). Mirrors `lib/conversation.py`'s posture on Supabase. |
+| 14/8/2026 | Routes that cannot exist are **rejected before any API call**; the flight cache is keyed **per route per day** and remembers genuine empties; candidates are capped at 12 | An exhaustive 16-scenario run measured the waste: `TLV->TLV` spent 8 units proving a tautology, and hour-granular cache keys made one run pay three times for the same schedule - roughly 40% of flight spend. All decidable offline from the committed airport table. |
+| 14/8/2026 | Flight search reaches **48 hours** (4 x 12h windows, 8 units max); accommodation search **widens its radius 12/25/40 km**, includes hostels, guest houses, motels, apartments and resorts, and passes **phone, website, address and accessibility** through to the passenger | 12 hours is a hard AeroDataBox cap (a 24h request 400s), so reach costs calls, not a bigger call — but only thin routes pay, since busy ones still stop after one window. On the hotel side, "Ramon/Eilat has no OSM coverage" turned out to be our 12 km radius: it has 141 places to stay within 40 km. Overpass is keyless and unmetered, so widening is free. The contact details were already in every response and being thrown away — **a phone number hands the passenger the one job the agent cannot do**, confirming a room and a rate. |
+| 14/8/2026 | **Non-bookable flights are filtered in `lib/tools/flights.py`**, not left to the model — a status deny-list (`Departed`, `Canceled`, `Arrived`, `EnRoute`, `Diverted`, `GateClosed`, …) drops candidates before the prompt is built | Live validation caught `FlightAgent` recommending a flight already marked `Departed`. From identical data it flagged the status in one run and ignored it in the next: a good reasoner, an unreliable filter. Whether an option is catchable at all decides whether it is an option, so it belongs in code. General lesson for the team: **facts that gate usability go in the tool; judgement goes in the prompt.** |
+| 10/8/2026 | **Reversal:** on a data-source failure the search agents **refuse and say so** — no LLM call, no options, and the passenger is told nothing could be verified and where to look instead | Live validation against the real model (12 scenarios, `docs/search-agents-capabilities.md`) showed the previous decision never worked: with no candidates the model returned `{"options": []}` every time, because the system prompt's "choose only from that list" outranks a user-prompt instruction to improvise. Forcing it would be wrong anyway — a fabricated flight number for a real airline is *actionable*, and a passenger can go and ask for it at the desk, which is the exact hallucination this project positions itself against. Refusing is also cheaper: a degraded turn now costs zero LLM calls instead of one. `tests/conftest.py` gained a `fake_search_data` fixture so Supervisor tests still reach the agents. |
 | 9/8/2026 | Airport coordinates ship as a generated **Python module**, not JSON | Vercel's Python builder traces imports, not data files. A `.json` would need a `vercel.json` `includeFiles` change and would fail *only in production*, silently, if the glob were wrong. |
 | 14/8/2026 | The Supervisor **narrows `needs` on follow-up turns** — "anything earlier than the 04:25?" dispatches `FlightAgent` alone | Person B's design doc D6, assigned to Person A. Re-dispatching the crew for a one-line question costs ~7 LLM calls and 2 AeroDataBox units out of a 600-unit month and a $13 project. The narrowing lives in `REFINE_SYSTEM_PROMPT`, not in keyword matching: the model already reads the message, and a keyword list would be the same crude parsing the stub apologised for. A follow-up answerable from the conversation returns an empty `needs` and dispatches nobody — so the refinement gate now only fires when there is actually a crew to block. |
 | 14/8/2026 | A failed **composing** call falls back to the flat digest of the crew's results rather than erroring the turn | By the time we compose, up to six LLM calls and two external quotas are already spent. Losing the whole plan to the last call is worse than handing the passenger a mechanical version of it, and it matches the partial-failure policy already applied to the sub-agents. The failed call still reaches `steps[]` on the exception, so the trace stays honest. |

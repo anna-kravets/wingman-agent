@@ -28,11 +28,16 @@ contract, the date sync, and the four module names on the architecture PNG.
 |---|---|---|
 | D1 | Flights from **AeroDataBox** (RapidAPI free plan); hotels from **OpenStreetMap Overpass** | Amadeus Self-Service — the obvious choice — was decommissioned 17/7/2026 and its keys disabled; Kiwi Tequila went invite-only. AeroDataBox has the largest free quota still open to self-signup; Overpass is keyless, so the hotel half can never be blocked by a quota or an expired key. |
 | D2 | No free source of **prices or seat availability** exists in 2026 | Consequence, not a choice. `price_estimate` and `fare_conditions` are LLM-reasoned and must read as estimates. `/api/agent_info`'s description must say schedules and hotels are real while prices are estimated (`PROJECT_PLAN.md` Phase 3 already flags this). |
-| D3 | Data-source failure **degrades to LLM-only, clearly labelled** | The demo must survive an exhausted quota during grading. Mirrors the posture `lib/conversation.py` already takes on Supabase. The label goes in each option's existing `notes`, so no schema moves. |
+| ~~D3~~ | ~~Data-source failure **degrades to LLM-only, clearly labelled**~~ — **REVERSED 10/8/2026, see D3a** | Original rationale: the demo must survive an exhausted quota during grading, mirroring `lib/conversation.py`'s posture on Supabase. |
+| D3a | Data-source failure **refuses and says so**: no candidates ⇒ no LLM call, no options, and the passenger is told plainly | Live validation found the model refuses to invent here anyway — the system prompt's "choose only from that list" outranks a user-prompt instruction to improvise — so D3 never actually worked. It should not be forced: a fabricated flight number for a real airline is *actionable*, and a stressed passenger can go and ask for it at the desk. That is precisely the hallucination this project positions itself against, and a "illustrative" label does not survive a panicked reader. Refusing also costs one LLM call less per degraded turn. Evidence: `docs/search-agents-capabilities.md`. |
 | D4 | A tool fetch produces **no `steps[]` entry** | The spec ties `steps[]` to LLM calls, and a step requires `prompt.system_prompt`/`user_prompt` — an HTTP GET has neither. The fetched data appears verbatim inside the agent's LLM `user_prompt`, so the trace still shows exactly what drove the answer. One step per agent, matching the diagram. |
 | D5 | FlightAgent **defers baggage/fare/entitlement questions to DocumentationAgent** | AeroDataBox serves schedules, not carriage terms. Those live in the Contract of Carriage — Person C's corpus — and come back clause-cited, which is the project's differentiator. Forces a correction to `PROJECT_PLAN.md` and `CLAUDE.md` (§9). |
 | D6 | Quota guarded by a **process-local cache + `WINGMAN_LIVE_DATA` kill-switch**; separately ask Person A to narrow `needs` on follow-up turns | 600 units/month at 2 units per call is ~300 calls, shared across three developers plus grading. The cache is contained in Person B's files and needs nobody's schedule; the `needs` narrowing is the deeper fix and is raised as an integration item, not a blocker. |
-| D7 | **Direct flights only**, widening the time window when results are thin | The endpoint returns departures, not itineraries: it cannot build TLV→VIE→FRA, and verifying a second leg costs another 2 units. Every option returned is a real, verified flight. Stated as a limitation in the prompt and in `agent_info`. |
+| D7 | **Direct flights only**, widening the time window when results are thin | The endpoint returns departures, not itineraries. **Clarification (14/8/2026): connections are not impossible, they are declined.** We could compose one — for each departure to hub H arriving at T, a second FIDS call on H from T+MCT — at ~2 units per hub probed, so roughly 3× the cost per search. Two problems stop it: we would have to invent a minimum-connection-time rule, and, more seriously, two flights that line up on a schedule board form a *self-connection* with **no protection** — miss the second leg and nobody owes the passenger anything. Recommending that to someone already disrupted is worse advice than "no direct flight". Schedule data cannot tell us whether a routing is sellable as one through-ticket. If ever built, every such option must be labelled an unverified self-connection. |
+| D9 | **Non-bookable flights are filtered in the tool**, not left to the model: a deny-list of statuses (`Departed`, `Canceled`, `Arrived`, `EnRoute`, `Approaching`, `Diverted`, `GateClosed`, …) drops candidates before the prompt is built | Live validation on 14/8/2026 caught the model recommending a flight already marked `Departed`. It flagged that status in one run and silently ignored it in the next, from identical data — so it is a good reasoner and an unreliable filter. Whether an option is catchable at all determines whether it is an option, so it belongs in code. Deny-list rather than allow-list, so an unfamiliar status AeroDataBox adds later still reaches the passenger instead of emptying the list and triggering a false refusal. |
+| D10 | Flight search widens to **48 hours (4 windows, 8 units max)**, up from 24 | 12 hours is a hard server cap — a 24-hour request returns `HTTP 400: "must not be more than 12 hours in duration"` (verified 14/8/2026), so a longer reach means more calls, not a longer call. The cost lands only where it helps: a busy route still stops after one window at `MIN_OPTIONS` and pays 2 units. Thin routes — the ones that previously found nothing and refused — are the only ones that spend more. TLV→NCE went from a refusal to a real flight. |
+| D11 | Accommodation search **widens its radius (12 → 25 → 40 km)**, covers **hostels, guest houses, motels, apartments and resorts**, and passes through **contact detail** | Ramon/Eilat was written up as an OSM coverage gap after returning zero hotels at 12 km. It is 19 km from Eilat, which has 141 places to stay: the limitation was our radius, not the data. Overpass is keyless and unmetered, so widening costs only latency. Broadening the accommodation types also found a hostel 1.9 km from TLV — nearer than any hotel we had been offering. Contact detail was already in every response and being discarded; **a phone number is the single most valuable field here**, because it hands the passenger the one job this agent cannot do: confirming a free room and a real rate. |
+| D12 | **Impossible routes are rejected offline**; the flight cache is keyed **per route per day** and remembers genuine empties; the candidate list is capped at **12** | Found by the exhaustive run (16 scenarios). `TLV->TLV` widened through all four windows, spent 8 units on a route that cannot exist, then blamed a data outage - all three wrong, and all decidable from the committed airport table for free. The cache was keyed by *hour*, so one run paid three times for the same `TLV->FRA` schedule at 05, 22 and 23: about 40% of flight spend was avoidable. Empty results are now cached too, but only when the fetch actually succeeded - caching a transport failure would keep a warm instance broken. And `flights.search` had no size cap where `hotels.search` has always had one, so a busy route could inflate the prompt without limit; LHR->JFK already produced a 5,327-character prompt. |
 | D8 | `meals_included` stays **boolean**; uncertainty goes in `notes` | OSM almost never knows (1 of 20 TLV hotels carried any classification tag). Widening the field to `null` would change a locked schema and Person A's `_compose`. Set it from an OSM tag when present, else `false`, and say in `notes` that meals were not confirmed. |
 
 ---
@@ -49,7 +54,9 @@ Measured against the live endpoints on 9/8/2026, not assumed. These drive §4–
   (§5), so **150–300 searches per month**.
 - A per-second rate limit exists on the BASIC plan and is easy to trip with back-to-back
   calls; it returns HTTP 429. Requests must be spaced/retried.
-- The time range is capped at **12 hours** per call.
+- The time range is capped at **12 hours** per call — a hard server-side limit, confirmed
+  14/8/2026: a 24-hour request returns `HTTP 400 "must not be more than 12 hours in duration"`.
+  Reaching further therefore costs more calls, not a bigger one.
 - Future dates work. A TLV window for the next day returned **188 departures / 118 KB**,
   of which **3 were TLV→FRA**. Filtering and trimming in the tool takes that to **630 bytes**
   — a ~188× reduction, and the single most budget-relevant step in this work.
@@ -57,13 +64,21 @@ Measured against the live endpoints on 9/8/2026, not assumed. These drive §4–
 - Useful fields per departure: `number`, `airline.{name,iata}`, `arrival.airport.iata`,
   `departure.scheduledTime.local`, `arrival.scheduledTime.local`, `status`,
   `aircraft.model`, `departure.terminal`.
-- `/subscriptions/balance` reports remaining units and **costs 0 units**.
+- `/subscriptions/balance` reports remaining units. **Correction (10/8/2026): it appears to
+  consume ~2 units itself** — the counter dropped 592→590 across a session whose only other
+  calls were to keyless Overpass. Measure consumption by differencing around a run rather
+  than polling the endpoint casually.
 
 **Overpass** — `POST https://overpass-api.de/api/interpreter`, keyless, `User-Agent` required:
 
 - A 12 km radius around TLV returned **20 named hotels / 6.9 KB**; 8 trimmed rows are 905 bytes.
-- Metadata is sparse: **1 of 20** had a `stars` tag, nearly none had a website or address.
-  OSM reliably supplies name, coordinates and therefore exact distance — and little else.
+- Metadata is sparse but not empty. Of 20 near TLV: 1 `stars`, but **8 street addresses,
+  ~5 phone numbers and ~5 websites**. A phone number is the most useful field available,
+  because it lets the passenger settle price and availability themselves.
+- Coverage is a function of **radius**, not of OSM. Ramon/Eilat has nothing within 12 km and
+  **141 places to stay within 40 km**.
+- Overpass throttles on slot contention and recovers in seconds; a single unretried blip cost a
+  live run its entire hotel leg. Retry each mirror twice.
 - Names are frequently in the local language; prefer the `name:en` tag, fall back to `name`.
 
 ---
@@ -119,7 +134,7 @@ fetch candidates via tool   (D4: no step)
 4. Filters to `arrival.airport.iata == destination`, projects to the fields in §4, and
    normalises both timestamps to ISO 8601 with `T`.
 5. On HTTP 429, retries once after a short pause; on any other failure returns `[]`
-   rather than raising, so the agent degrades (D3) instead of losing the turn.
+   rather than raising. The agent then refuses and says so (D3a) rather than inventing.
 
 **`hotels.search`**
 
@@ -141,7 +156,6 @@ changes. Both prompts additionally state:
 - Never return an option that is not in the candidate list.
 - Never state baggage, fare or entitlement rules; defer to the entitlements section (D5).
 - `price_estimate` / `fare_conditions` must read as estimates, never as quoted prices (D2).
-- When no candidates were supplied, say so in `notes` — the options are illustrative (D3).
 - FlightAgent: direct flights only; if none suits, say so rather than inventing a connection (D7).
 - AccommodationAgent: state in `notes` when meals were not confirmed (D8).
 
@@ -163,7 +177,7 @@ Two states, never a silent third:
 | State | Trigger | Behaviour |
 |---|---|---|
 | **live** | candidates fetched | Options are real, verified flights/hotels |
-| **degraded** | fetch failed, quota gone, or `WINGMAN_LIVE_DATA=0` | No candidates block; prompt instructs the model to reason unaided and label the result illustrative in `notes` |
+| **refused** | fetch failed, quota gone, or `WINGMAN_LIVE_DATA=0` | **No LLM call at all.** The agent raises with a plain-language reason and the passenger is told nothing could be verified and where to look instead (D3a) |
 
 **Known consequence:** once `IS_STUB` is dropped, having no `LLMOD_API_KEY` stops producing
 a plausible fake plan and starts producing *"Could not complete: onward flights"* through the
@@ -183,7 +197,8 @@ Everything runs with **no keys of any kind**.
   window widening, cache hits, the kill-switch, `name:en` preference, distance sorting.
 - **Agent tests** — monkeypatch `lib.llm.call`. Cover: candidates reach `user_prompt`,
   validation drops malformed options, an all-malformed response raises with its step intact,
-  degraded mode labels its output, and the step's `module` matches the diagram.
+  a run with no candidates refuses without calling the model, and the step's `module`
+  matches the diagram.
 - **Shared edit** — `tests/test_supervisor.py` asserts against stub payloads and will fail
   once `run()` needs a key. Fixed by an autouse fixture that fakes `lib.llm.call`, which
   Person C will need for the RAG agent too. It is Person A's file: flagged in the PR
@@ -236,6 +251,6 @@ No new dependencies: `httpx` is already in `requirements.txt`.
   baggage follow-up gets a deferral rather than an answer. Deliberate — a deferral is
   correct where an invented allowance is not.
 - **OSM coverage varies by city.** Twenty hotels near TLV is comfortable; a smaller airport
-  may return few or none, which lands in the degraded path.
+  may return few or none, which lands in the refusal path (D3a).
 - **AeroDataBox response shape is now verified, but only for one route.** Other airports may
   carry sparser fields; the projection in §4 must tolerate missing keys.
