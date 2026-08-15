@@ -478,7 +478,11 @@ def test_facts_come_from_the_candidate(monkeypatch):
     assert option["website"] == "https://example.test"
     assert option["address"] == "12 HaNasi"
     assert option["wheelchair"] == "yes"
-    assert option["area"] == "Lod"
+    assert option["city"] == "Lod"
+    # Deprecated compatibility field: supervisor._digest reads this and would
+    # otherwise lose the distance until Person A migrates (spec P7).
+    assert option["area"] == "2.4 km from the terminal, Lod"
+    assert option["meals_included"] is False
 
 
 def test_the_stay_window_is_written_not_asked_for(monkeypatch):
@@ -652,14 +656,26 @@ def _match(option: dict, candidates: list[dict]) -> dict | None:
     return next((c for c in candidates if _normalise(c.get("name")) == wanted), None)
 
 
+def _area_text(candidate: dict) -> str | None:
+    """The human phrasing supervisor._digest still reads. Deprecated with `area`."""
+    distance, city = candidate.get("distance_km"), candidate.get("area")
+    if distance is None:
+        return city
+    return f"{distance} km from the terminal" + (f", {city}" if city else "")
+
+
 def _enrich(option: dict, candidate: dict, stay_window: dict) -> dict:
     """Facts from OpenStreetMap, nights from the Supervisor, prose from the model."""
+    meals = MEALS_FROM_TAG.get(str(candidate.get("breakfast", "")).lower(), "unknown")
     enriched = {
         "id": option.get("id"),
         "name": candidate.get("name"),
         "kind": candidate.get("kind"),          # absent when it is an ordinary hotel
         "distance_km": candidate.get("distance_km"),
-        "area": candidate.get("area"),
+        "city": candidate.get("area"),
+        # Deprecated (spec P7): supervisor._digest reads `area` and would otherwise
+        # lose the distance entirely. Delete once it reads distance_km and city.
+        "area": _area_text(candidate),
         "address": candidate.get("address"),
         "phone": candidate.get("phone"),
         "website": candidate.get("website"),
@@ -669,7 +685,10 @@ def _enrich(option: dict, candidate: dict, stay_window: dict) -> dict:
         "check_out": stay_window.get("check_out"),
         "nights": stay_window.get("nights"),
         "price_estimate": option.get("price_estimate"),
-        "meals": MEALS_FROM_TAG.get(str(candidate.get("breakfast", "")).lower(), "unknown"),
+        "meals": meals,
+        # Deprecated (spec P7): absent reads as falsy in _digest, which would assert
+        # "no meals" where the truth is "unknown". Delete with `area`.
+        "meals_included": meals == "included",
         "notes": option.get("notes"),
     }
     return {key: value for key, value in enriched.items() if value is not None}

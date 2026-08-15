@@ -39,6 +39,7 @@ this week. A rename after submission costs far more.
 | P3 | **Caveats are generated in code wherever the trigger is a fact** | "Only one option in 48 hours", "the earliest departs in 71 minutes", "no phone number for any option" are all decidable from data. Leaving them to the model reproduces the `status` failure. The model may add its own on top. |
 | P4 | Every caveat opens with **`NOTE:`**, **`ASK:`** or **`CONFIRM:`** | Keeps the intent unmissable inside a plain string: inform the passenger, get information from them, or do not proceed silently. Gives Person A something to branch on without changing the agreed shape. |
 | P5 | Fields the tool already fetches are **surfaced, not discarded**: `terminal`, `aircraft`, `status`, `phone`, `website`, `address`, `kind`, `stars`, `wheelchair` | All were already being paid for and thrown away. `phone` is the single most valuable field either agent has: it hands the passenger the one job neither agent can do — confirming a room and a rate. `terminal` matters because the passenger is standing in an airport. |
+| P7 | **Two short-lived compatibility fields** so nothing regresses while Person A migrates: `area` keeps its human form (`"2.4 km from the terminal, Lod"`) alongside the new numeric `distance_km` and plain `city`, and `meals_included` survives as a deprecated boolean beside `meals` | Traced against the real `_digest`: it reads `stay.area` and `stay.meals_included`. Today the model writes the distance *into* `area`, so **the distance currently does reach the passenger** - splitting it cleanly would delete the single most useful hotel fact from the plan until her rewrite lands. `meals_included` absent reads as falsy, which would assert "no meals" where the truth is "unknown". Two fields and a comment remove the whole coordination risk; Person A deletes them when she migrates. `stops` and `fare_conditions` need no equivalent - the digest never read them. |
 | P6 | Breaking changes taken now: `stops` dropped, `fare_conditions` → `rebooking`, `area` split into `distance_km` + `area`, `meals_included` → `meals` | `stops` is permanently `0` since direct-only is a decision (D7). `fare_conditions` has never held fare data and the name misleads whoever reads the payload next. `area` was a free-text blob mixing distance with place, which nothing could sort or compare. `meals_included: false` was a lie dressed as data — we almost never know — and `meals: "unknown"` says so. |
 
 ---
@@ -153,10 +154,11 @@ therefore no `caveats`: the reason travels as the `LLMError` message, as it does
 
 ## 7. Risk
 
-**This is a breaking change to a locked schema, eight days before the deadline, and it only pays off
-if Person A's `_digest` rewrite lands too.** Until it does, the passenger sees *less* than today:
-`stops`, `fare_conditions` and `meals_included` disappear from a digest still looking for them.
-Agreed at the meeting that she is doing it — **agree a date, not just an intention.**
+**Resolved by P7.** The original risk was that this only paid off once Person A's `_digest` rewrite
+landed, and until then the passenger saw *less* — specifically the hotel's distance, which the
+digest reads out of `area`. The compatibility fields close that window: there is now no point at
+which the output degrades, and her migration can happen whenever suits her.
 
-Mitigation if her half slips: the renames are the only breaking part. Reverting to the old names is a
-mechanical change in two files, and the additive fields and `caveats` can ship regardless.
+What remains is bookkeeping: `area` and `meals_included` are marked deprecated in the code and in
+the §1 contract, and should be deleted once her digest reads `distance_km`, `city` and `meals`. If
+they are still there at submission they are harmless — redundant, not wrong.
