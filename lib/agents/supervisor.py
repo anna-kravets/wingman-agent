@@ -167,6 +167,12 @@ from earlier only if this question is actually about it. If you asked them somet
 still have not answered it, remind them of that one open question in a single line instead of
 re-listing everything you asked last time.
 
+Stay on the one thing they asked about. If they ask about their sleep options, answer about sleep
+only - do not bring their flight or what they are owed into it, even though you can see those too
+below. The same the other way round. When they ask you to compare, compare in real depth using every
+field you have for each option there - price, distance, stars, meals, whatever applies - not just
+whichever single fact is easiest to restate.
+
 State amounts and entitlements only where the findings support them, and say which document each came
 from. Where something could not be finished, say plainly what is missing rather than papering over it.
 
@@ -263,6 +269,43 @@ def _prior_results_block(history: list[dict]) -> list[str]:
                                  f"{o['distance_km']} km" if o.get("distance_km") is not None else "")
                      if p)
             for o in stays))
+    return lines if len(lines) > 1 else []
+
+
+def _prior_options_digest(history: list[dict]) -> list[str]:
+    """Every previously-found option, in full — for a follow-up that compares or asks
+    for detail on something already found rather than searched for again.
+
+    `_prior_results_block` above stays identity-only because the refinement call only
+    needs to recognise what is already on the table, not cite it. The composing call is
+    different: "compare the three sleep options" cannot be answered in any depth from an
+    id, a name and a distance. Reuses `_flight_line`/`_stay_line` so a prior option reads
+    exactly as rich as one freshly found. Still merged per key, most recent turn wins,
+    and still capped at `MAX_DIGEST_OPTIONS` — this is bounded by how many options a
+    search agent ever returns, not by how long the conversation has run, so it does not
+    reintroduce the O(n^2) growth `_prior_results_block` was written to avoid.
+
+    Kept in clearly separate, labelled sections so a request about one category never
+    hands the composing call an in-context reason to start comparing another.
+    """
+    prior: dict = {}
+    for turn in history:                       # oldest first, so later turns win per key
+        found = turn.get("results") if isinstance(turn, dict) else None
+        if isinstance(found, dict):
+            prior.update(found)
+    if not prior:
+        return []
+
+    lines = ["Options already found earlier in this conversation "
+             "(answer from these; do not search again for them):"]
+    onward = _options(prior.get("flight"))
+    if onward:
+        lines.append("  Onward flight options:")
+        lines += [f"    {_flight_line(o)}" for o in onward]
+    stays = _options(prior.get("stay"))
+    if stays:
+        lines.append("  Sleep options:")
+        lines += [f"    {_stay_line(o)}" for o in stays]
     return lines if len(lines) > 1 else []
 
 
@@ -578,7 +621,7 @@ def _compose_prompt(request: dict, digest: str, history: list[dict]) -> str:
     block = _history_block(history)
     if block:
         lines += [""] + block
-    prior = _prior_results_block(history)
+    prior = _prior_options_digest(history)
     if prior:
         lines += [""] + prior
     if request.get("assumptions"):

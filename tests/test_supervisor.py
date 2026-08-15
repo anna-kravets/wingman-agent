@@ -814,5 +814,73 @@ def test_a_narrowed_follow_up_does_not_shadow_an_earlier_stay():
     assert "Airport Plaza" in block
 
 
+# --- the rich prior-options digest (compose-only) --------------------------------
+
+
+def test_prior_options_digest_carries_full_detail_not_just_identity():
+    # The bug this pins: a follow-up asked to compare sleep options got only id, name
+    # and distance, because the composing call was fed the same identity-only block as
+    # the refinement call. It cannot compare price or meals with data it was never given.
+    history = [{"prompt": "a", "response": "a plan", "results": {"stay": {
+        "options": [{"id": "H1", "name": "Airport Plaza", "distance_km": 2.4,
+                     "price_estimate": "EUR 120 total (estimate)", "meals": "not_included"}],
+        "recommended_id": "H1",
+    }}}]
+    block = "\n".join(supervisor._prior_options_digest(history))
+
+    assert "EUR 120 total (estimate)" in block
+    assert "no meals" in block
+
+
+def test_prior_options_digest_separates_categories_into_their_own_sections():
+    # The other half of the same bug: a stay-only question pulled in flights too,
+    # because both categories sat in one undifferentiated line. Distinct, labelled
+    # sections give the model a scope boundary to actually hold to.
+    history = [{"prompt": "a", "response": "a plan", "results": {
+        "flight": {"options": [{"id": "F1", "flight_number": "LH 687"}], "recommended_id": "F1"},
+        "stay": {"options": [{"id": "H1", "name": "Airport Plaza"}], "recommended_id": "H1"},
+    }}]
+    block = "\n".join(supervisor._prior_options_digest(history))
+
+    assert "Onward flight options:" in block
+    assert "Sleep options:" in block
+
+
+def test_prior_options_digest_merges_per_key_most_recent_wins():
+    history = [
+        {"prompt": "a", "response": "a", "results": {"stay": {
+            "options": [{"id": "H1", "name": "OLD PLACE"}], "recommended_id": "H1"}}},
+        {"prompt": "b", "response": "b", "results": {"stay": {
+            "options": [{"id": "H1", "name": "NEW PLACE"}], "recommended_id": "H1"}}},
+    ]
+    block = "\n".join(supervisor._prior_options_digest(history))
+
+    assert "NEW PLACE" in block
+    assert "OLD PLACE" not in block
+
+
+def test_no_prior_results_means_no_digest():
+    assert supervisor._prior_options_digest([{"prompt": "hello", "response": "hi"}]) == []
+
+
+def test_the_composing_prompt_carries_the_rich_prior_digest_not_the_identity_one():
+    history = [{"prompt": "a", "response": "a plan", "results": {"stay": {
+        "options": [{"id": "H1", "name": "Airport Plaza",
+                     "price_estimate": "EUR 120 total (estimate)"}],
+        "recommended_id": "H1",
+    }}}]
+    prompt = supervisor._compose_prompt({"local_now": "2026-08-15T22:15:00"}, "digest", history)
+
+    assert "EUR 120 total (estimate)" in prompt
+
+
+def test_the_composing_prompt_tells_the_model_to_stay_on_topic_and_compare_in_depth():
+    _, steps, _ = supervisor.run(COMPLETE, [])
+    compose = [s for s in steps if s["module"] == "Supervisor"][-1]["prompt"]
+
+    assert "Stay on the one thing they asked about" in compose["system_prompt"]
+    assert "compare in real depth" in compose["system_prompt"]
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))
