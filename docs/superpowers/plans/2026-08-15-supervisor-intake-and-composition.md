@@ -238,15 +238,26 @@ argument and ignores it in favour of the scenario's clock:
 ```
 
 In `tests/test_search_runner.py`, the three fake `original` functions take three arguments and every
-`patched(...)` call passes a third:
+`patched(...)` call passes a third. `patched` no longer overwrites `local_now` itself — it hands the
+scenario clock to `original` — so the fake used by `test_local_now_is_injected_from_the_case` has to
+honour that argument or the test asserts nothing:
+
+```python
+def complete_request(local_now="ignored"):
+    return {"party_size": 1, "local_now": local_now, "flight_number": "LH318",
+            "origin": "TLV", "destination": "FRA", "disruption": "cancelled",
+            "stranded_at": "TLV"}
+```
 
 ```python
     def original(prompt, history, local_now):
-        return complete_request(), {"module": "Supervisor"}
+        return complete_request(local_now), {"module": "Supervisor"}
 
     patched = runner.build_request_patch(CASE, original)
     request, _ = patched("prompt", [], "ignored")
 ```
+
+The other two fakes ignore the argument, which is correct — neither asserts on `local_now`.
 
 Apply the same two changes to `test_request_override_wins` and
 `test_missing_is_recomputed_so_the_gate_still_works`.
