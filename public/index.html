@@ -369,13 +369,26 @@
       padding: 2px 0 0;
       font-size: 14.5px;
       line-height: 1.72;
-      white-space: pre-wrap;
       overflow-wrap: anywhere;
     }
+
+    .bubble p { margin: 0 0 10px; }
+    .bubble p:last-child { margin-bottom: 0; }
+    .bubble ul, .bubble ol { margin: 0 0 10px; padding-left: 22px; }
+    .bubble ul:last-child, .bubble ol:last-child { margin-bottom: 0; }
+    .bubble li { margin: 2px 0; }
+    .bubble code { background: rgba(23,32,30,.07); border-radius: 4px; padding: .1em .35em; font-family: var(--mono); font-size: 12.5px; }
+    .bubble pre.md-code { margin: 0 0 10px; border-radius: 10px; background: rgba(23,32,30,.06); padding: 12px 14px; overflow-x: auto; }
+    .bubble pre.md-code:last-child { margin-bottom: 0; }
+    .bubble pre.md-code code { background: none; padding: 0; }
+    .bubble a { color: #47703c; text-decoration: underline; text-underline-offset: 2px; }
 
     .user .message-body { max-width: 620px; }
     .user .message-meta { color: #7b8581; text-align: right; }
     .user .bubble { border-radius: var(--radius-md) 5px var(--radius-md) var(--radius-md); background: var(--user); padding: 13px 17px; color: #f7faf6; font-size: 14px; line-height: 1.65; }
+    .user .bubble code { background: rgba(255,255,255,.16); }
+    .user .bubble pre.md-code { background: rgba(255,255,255,.12); }
+    .user .bubble a { color: var(--accent); }
     .message.error .bubble { border-left: 2px solid #cf9a94; padding-left: 13px; color: #8f342f; }
 
     .trace {
@@ -800,6 +813,54 @@
       requestAnimationFrame(scrollToBottom);
     }
 
+    function escapeHtml(str) {
+      return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    function renderMarkdown(raw) {
+      const escaped = escapeHtml(String(raw ?? "")).replace(/\r\n/g, "\n");
+      const codeBlocks = [];
+      const withoutFences = escaped.replace(/```[^\n]*\n?([\s\S]*?)```/g, (_, code) => {
+        codeBlocks.push(code.replace(/\n$/, ""));
+        return ` CB${codeBlocks.length - 1} `;
+      });
+      return withoutFences.split(/\n{2,}/).map(block => renderMarkdownBlock(block, codeBlocks)).join("");
+    }
+
+    function renderMarkdownBlock(block, codeBlocks) {
+      const trimmed = block.trim();
+      if (!trimmed) return "";
+
+      const codeBlockMatch = trimmed.match(/^CB(\d+)$/);
+      if (codeBlockMatch) return `<pre class="md-code"><code>${codeBlocks[Number(codeBlockMatch[1])]}</code></pre>`;
+
+      const lines = trimmed.split("\n");
+      const isBulletList = lines.every(line => /^[-*]\s+/.test(line));
+      const isNumberedList = lines.every(line => /^\d+\.\s+/.test(line));
+      if (isBulletList || isNumberedList) {
+        const tag = isBulletList ? "ul" : "ol";
+        const items = lines.map(line => `<li>${renderInlineMarkdown(line.replace(/^(?:[-*]|\d+\.)\s+/, ""))}</li>`).join("");
+        return `<${tag}>${items}</${tag}>`;
+      }
+
+      return `<p>${renderInlineMarkdown(trimmed).replace(/\n/g, "<br>")}</p>`;
+    }
+
+    function renderInlineMarkdown(text) {
+      const codeSpans = [];
+      let result = text.replace(/`([^`]+?)`/g, (_, code) => {
+        codeSpans.push(code);
+        return ` CS${codeSpans.length - 1} `;
+      });
+
+      result = result
+        .replace(/\*\*([^*]+?)\*\*|__([^_]+?)__/g, (_, a, b) => `<strong>${a || b}</strong>`)
+        .replace(/\*([^*]+?)\*|(?<![A-Za-z0-9])_([^_]+?)_(?![A-Za-z0-9])/g, (_, a, b) => `<em>${a || b}</em>`)
+        .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+
+      return result.replace(/ CS(\d+) /g, (_, i) => `<code>${codeSpans[Number(i)]}</code>`);
+    }
+
     function messageElement(message) {
       const row = document.createElement("article");
       row.className = `message ${message.role}${message.error ? " error" : ""}`;
@@ -819,7 +880,7 @@
       meta.textContent = message.role === "user" ? "You" : "Wingman";
       const bubble = document.createElement("div");
       bubble.className = "bubble";
-      bubble.textContent = message.content;
+      bubble.innerHTML = renderMarkdown(message.content);
       body.append(meta, bubble);
 
       if (message.role === "assistant" && Array.isArray(message.steps) && message.steps.length) {
