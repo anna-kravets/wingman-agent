@@ -205,12 +205,12 @@ async def execute(request: Request, response: Response):
         history = []
 
     try:
-        response_text, steps = supervisor.run(prompt, history, local_time=local_time)
+        response_text, steps, results = supervisor.run(prompt, history, local_time=local_time)
     except Exception as exc:
         return _error(f"The agent failed while handling the request: {exc}")
 
     if conversation_id:
-        turn = {"prompt": prompt, "response": response_text}
+        turn = {"prompt": prompt, "response": response_text, "results": results}
         first_turn = history[0] if history and isinstance(history[0], dict) else {}
         first_prompt = first_turn.get("prompt", prompt)
         if not isinstance(first_prompt, str):

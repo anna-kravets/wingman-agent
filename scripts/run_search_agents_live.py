@@ -85,7 +85,7 @@ def run_case(case: dict) -> dict:
                 "started_at": datetime.now().astimezone().isoformat(),
                 "model": llm.TEXT_MODEL}
     try:
-        response, steps = supervisor.run(case["prompt"], list(case["history"]))
+        response, steps, _ = supervisor.run(case["prompt"], list(case["history"]))
         artifact.update({"status": "ok", "response": response, "steps": steps})
     except Exception as exc:  # noqa: BLE001 - the artifact must record any failure
         artifact.update({"status": "error", "error": str(exc),

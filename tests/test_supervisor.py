@@ -48,7 +48,7 @@ def modules_of(steps):
 
 
 def test_underspecified_message_asks_instead_of_dispatching():
-    text, steps = supervisor.run("my flight got cancelled help", [])
+    text, steps, _ = supervisor.run("my flight got cancelled help", [])
 
     assert "I need a couple of details" in text
     # The gate's whole point is cost: one call, not seven.
@@ -57,12 +57,12 @@ def test_underspecified_message_asks_instead_of_dispatching():
 
 def test_gate_does_not_repeat_the_same_question_twice():
     # origin and destination are both missing and share a question.
-    text, _ = supervisor.run("cancelled, I'm stuck", [])
+    text, _, _ = supervisor.run("cancelled, I'm stuck", [])
     assert text.count("Which airport were you flying from") == 1
 
 
 def test_complete_message_dispatches_the_crew():
-    text, steps = supervisor.run(COMPLETE, [])
+    text, steps, _ = supervisor.run(COMPLETE, [])
 
     assert set(modules_of(steps)) == MODULES
     assert modules_of(steps)[0] == "Supervisor"    # refinement first
@@ -71,13 +71,13 @@ def test_complete_message_dispatches_the_crew():
 
 
 def test_every_step_module_is_on_the_architecture_diagram():
-    _, steps = supervisor.run(COMPLETE, [])
+    _, steps, _ = supervisor.run(COMPLETE, [])
     assert set(modules_of(steps)) <= MODULES
 
 
 def test_documentation_agent_emits_three_steps_for_its_reflection_loop():
     # The reason the interface contract is (payload, steps) rather than one step.
-    _, steps = supervisor.run(COMPLETE, [])
+    _, steps, _ = supervisor.run(COMPLETE, [])
     assert modules_of(steps).count("DocumentationAgent") == 3
 
 
@@ -86,14 +86,14 @@ def test_documentation_agent_emits_three_steps_for_its_reflection_loop():
 
 def test_the_refinement_call_sees_the_earlier_turns():
     history = [{"prompt": COMPLETE, "response": "Onward flight: LH 687, TLV to FRA."}]
-    _, steps = supervisor.run("anything earlier?", history)
+    _, steps, _ = supervisor.run("anything earlier?", history)
 
     assert "LH318" in steps[0]["prompt"]["user_prompt"]
 
 
 def test_a_flight_follow_up_dispatches_only_the_flight_agent():
     history = [{"prompt": COMPLETE, "response": "Onward flight: LH 687, TLV to FRA."}]
-    _, steps = supervisor.run("anything earlier than the 04:25?", history)
+    _, steps, _ = supervisor.run("anything earlier than the 04:25?", history)
 
     # Re-dispatching the crew here costs ~7 LLM calls and 2 AeroDataBox units for a
     # question only FlightAgent can answer.
@@ -103,7 +103,7 @@ def test_a_flight_follow_up_dispatches_only_the_flight_agent():
 def test_a_follow_up_that_needs_nobody_is_answered_instead_of_interrogated():
     # Details are still missing, but nothing is being dispatched, so nothing is blocked.
     history = [{"prompt": "my flight got cancelled help", "response": "I need a couple of details"}]
-    text, steps = supervisor.run("never mind, thanks", history)
+    text, steps, _ = supervisor.run("never mind, thanks", history)
 
     assert modules_of(steps) == ["Supervisor", "Supervisor"]  # refinement, then compose
     assert "I need a couple of details" not in text
@@ -154,7 +154,7 @@ def test_no_stay_window_without_a_flight():
 
 
 def test_accommodation_is_booked_for_the_nights_the_flight_implies():
-    _, steps = supervisor.run(COMPLETE, [])
+    _, steps, _ = supervisor.run(COMPLETE, [])
     stay = next(s for s in steps if s["module"] == "AccommodationAgent")
     asked = stay["prompt"]["user_prompt"]
 
@@ -184,7 +184,7 @@ def test_short_history_is_untouched():
 
 def test_capped_history_is_what_reaches_the_agents():
     history = [{"prompt": f"q{i}", "response": f"a{i}"} for i in range(20)]
-    _, steps = supervisor.run(COMPLETE, history)
+    _, steps, _ = supervisor.run(COMPLETE, history)
 
     flight = next(s for s in steps if s["module"] == "FlightAgent")
     assert "q0" not in flight["prompt"]["user_prompt"]
@@ -199,7 +199,7 @@ def test_one_agent_failing_does_not_lose_the_rest_of_the_plan(monkeypatch):
         raise RuntimeError("Pinecone unreachable")
 
     monkeypatch.setattr(documentation_agent, "run", explode)
-    text, steps = supervisor.run(COMPLETE, [])
+    text, steps, _ = supervisor.run(COMPLETE, [])
 
     assert "ONWARD FLIGHT" in text
     assert "SOMEWHERE TO SLEEP" in text
@@ -218,7 +218,7 @@ def test_an_agents_own_refusal_wording_survives(monkeypatch):
                        steps=[], passenger_message=flight_agent.NO_LIVE_DATA)
 
     monkeypatch.setattr(flight_agent, "run", refuse)
-    text, _ = supervisor.run(COMPLETE, [])
+    text, _, _ = supervisor.run(COMPLETE, [])
 
     assert "check your airline's app or the departures board" in text
     assert "internal wording" not in text
@@ -233,7 +233,7 @@ def test_an_internal_failure_falls_back_to_a_written_sentence(monkeypatch):
         raise LLMError("FlightAgent: no option named a flight that was actually offered", steps=[])
 
     monkeypatch.setattr(flight_agent, "run", refuse)
-    text, _ = supervisor.run(COMPLETE, [])
+    text, _, _ = supervisor.run(COMPLETE, [])
 
     assert supervisor.FAILURE_MESSAGES["flight"] in text
     assert "no option named a flight" not in text
@@ -249,7 +249,7 @@ def test_a_failed_call_still_appears_in_the_trace(monkeypatch):
         raise LLMError("DocumentationAgent: timed out", steps=[failed_step])
 
     monkeypatch.setattr(documentation_agent, "run", fail)
-    _, steps = supervisor.run(COMPLETE, [])
+    _, steps, _ = supervisor.run(COMPLETE, [])
 
     assert failed_step in steps
     assert modules_of(steps).count("DocumentationAgent") == 1
@@ -266,7 +266,7 @@ def test_calls_that_succeeded_before_a_failure_are_kept(monkeypatch):
         raise LLMError("DocumentationAgent: timed out", steps=[drafted, critiqued])
 
     monkeypatch.setattr(documentation_agent, "run", fail_halfway)
-    _, steps = supervisor.run(COMPLETE, [])
+    _, steps, _ = supervisor.run(COMPLETE, [])
 
     # Both the successful draft and the failed critique survive, in order.
     assert steps.index(drafted) < steps.index(critiqued)
@@ -286,7 +286,7 @@ def test_a_failed_composing_call_still_hands_over_the_plan(monkeypatch):
         return crew(module, system_prompt, user_prompt, **kwargs)
 
     monkeypatch.setattr(llm, "call", fail_on_compose)
-    text, steps = supervisor.run(COMPLETE, [])
+    text, steps, _ = supervisor.run(COMPLETE, [])
 
     # Six calls and two external quotas are already spent by the time we compose.
     assert "ONWARD FLIGHT" in text
@@ -302,7 +302,7 @@ def test_a_half_labelled_option_still_produces_a_plan(monkeypatch):
             "recommended_id": "F1"}
     monkeypatch.setattr(flight_agent, "run", lambda *a, **k: (bare, []))
 
-    text, _ = supervisor.run(COMPLETE, [])
+    text, _, _ = supervisor.run(COMPLETE, [])
 
     assert "ONWARD FLIGHT" in text
     assert supervisor.FAILURE_MESSAGES["flight"] not in text
@@ -312,7 +312,7 @@ def test_a_failing_flight_search_skips_the_stay_rather_than_guessing_nights(monk
     from lib.agents import flight_agent
 
     monkeypatch.setattr(flight_agent, "run", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no data")))
-    text, steps = supervisor.run(COMPLETE, [])
+    text, steps, _ = supervisor.run(COMPLETE, [])
 
     # Booking the wrong nights is worse than saying a flight is needed first.
     assert "AccommodationAgent" not in modules_of(steps)
@@ -328,7 +328,7 @@ def digest_of(text_and_steps):
 
 
 def test_every_option_reaches_the_plan_not_just_the_recommended_one():
-    text, _ = supervisor.run(COMPLETE, [])
+    text, _, _ = supervisor.run(COMPLETE, [])
 
     # agent_info promises the passenger can compare. The composing call has to see
     # more than one option for that sentence to be true.
@@ -337,13 +337,13 @@ def test_every_option_reaches_the_plan_not_just_the_recommended_one():
 
 
 def test_the_recommended_option_comes_first():
-    text, _ = supervisor.run(COMPLETE, [])
+    text, _, _ = supervisor.run(COMPLETE, [])
 
     assert text.index("LH 687") < text.index("LY 357")
 
 
 def test_the_new_flight_facts_reach_the_plan():
-    text, _ = supervisor.run(COMPLETE, [])
+    text, _, _ = supervisor.run(COMPLETE, [])
 
     assert "terminal 3" in text
     assert "Airbus A320" in text
@@ -351,20 +351,20 @@ def test_the_new_flight_facts_reach_the_plan():
 
 
 def test_the_hotels_phone_number_reaches_the_plan():
-    text, _ = supervisor.run(COMPLETE, [])
+    text, _, _ = supervisor.run(COMPLETE, [])
 
     # The one job neither agent can do: confirming a room and a rate.
     assert "+972 3 000 0000" in text
 
 
 def test_the_distance_reaches_the_plan_from_distance_km():
-    text, _ = supervisor.run(COMPLETE, [])
+    text, _, _ = supervisor.run(COMPLETE, [])
 
     assert "2.4 km from the terminal" in text
 
 
 def test_unknown_meals_are_not_asserted_as_absent():
-    text, _ = supervisor.run(COMPLETE, [])
+    text, _, _ = supervisor.run(COMPLETE, [])
 
     # `meals_included: false` was a lie dressed as data - we almost never know.
     assert "meals not confirmed" in text
@@ -398,14 +398,14 @@ def test_no_payload_yields_no_options():
 
 def test_the_passengers_own_clock_reaches_the_agents():
     when = datetime.now().replace(hour=3, minute=33, second=7, microsecond=0)
-    _, steps = supervisor.run(COMPLETE, [], local_time=when)
+    _, steps, _ = supervisor.run(COMPLETE, [], local_time=when)
 
     flight = next(s for s in steps if s["module"] == "FlightAgent")
     assert "Local time now: " + when.isoformat(timespec="seconds") in flight["prompt"]["user_prompt"]
 
 
 def test_without_a_clock_the_server_time_is_used():
-    _, steps = supervisor.run(COMPLETE, [])
+    _, steps, _ = supervisor.run(COMPLETE, [])
 
     flight = next(s for s in steps if s["module"] == "FlightAgent")
     assert f"Local time now: {date.today().isoformat()}" in flight["prompt"]["user_prompt"]
@@ -523,7 +523,7 @@ IMPOSSIBLE_ROUTE = "LH318 TLV -> TLV was cancelled at the gate"
 
 
 def test_a_blocking_conflict_asks_instead_of_dispatching():
-    text, steps = supervisor.run(IMPOSSIBLE_ROUTE, [])
+    text, steps, _ = supervisor.run(IMPOSSIBLE_ROUTE, [])
 
     assert "no flight to look for" in text
     # Same economics as the missing-fields gate: one call, not seven.
@@ -531,7 +531,7 @@ def test_a_blocking_conflict_asks_instead_of_dispatching():
 
 
 def test_the_conflict_question_reads_as_a_sentence():
-    text, _ = supervisor.run(IMPOSSIBLE_ROUTE, [])
+    text, _, _ = supervisor.run(IMPOSSIBLE_ROUTE, [])
 
     # route_problem's reasons start lower-case because they are interpolated after
     # "FlightAgent: " today.
@@ -540,7 +540,7 @@ def test_the_conflict_question_reads_as_a_sentence():
 
 def test_a_blocking_conflict_with_nothing_to_dispatch_does_not_interrogate():
     history = [{"prompt": IMPOSSIBLE_ROUTE, "response": "The origin and destination are both TLV"}]
-    text, steps = supervisor.run("never mind, thanks", history)
+    text, steps, _ = supervisor.run("never mind, thanks", history)
 
     assert modules_of(steps) == ["Supervisor", "Supervisor"]
     assert "Before I can help" not in text
@@ -584,7 +584,7 @@ def test_assumptions_reach_the_composing_call():
 
 
 def test_the_composing_prompt_never_names_the_inside_of_the_system():
-    _, steps = supervisor.run(COMPLETE, [])
+    _, steps, _ = supervisor.run(COMPLETE, [])
     compose = [s for s in steps if s["module"] == "Supervisor"][-1]["prompt"]
 
     banned = ("crew", "FlightAgent", "AccommodationAgent", "DocumentationAgent", "agent")
@@ -594,7 +594,7 @@ def test_the_composing_prompt_never_names_the_inside_of_the_system():
 
 
 def test_the_composing_prompt_says_who_it_is():
-    _, steps = supervisor.run(COMPLETE, [])
+    _, steps, _ = supervisor.run(COMPLETE, [])
     compose = [s for s in steps if s["module"] == "Supervisor"][-1]["prompt"]
 
     assert "Wingman" in compose["system_prompt"]
@@ -653,6 +653,71 @@ def test_no_caveats_means_no_empty_headings():
 
     assert "BEFORE YOU ACT ON THIS" not in text
     assert "WORTH KNOWING" not in text
+
+
+# --- results across turns ---
+
+
+def test_the_results_come_back_with_the_plan():
+    _, _, results = supervisor.run(COMPLETE, [])
+
+    assert set(results) == {"flight", "stay", "rights"}
+    assert results["flight"]["recommended_id"] == "F1"
+
+
+def test_a_gated_turn_returns_no_results():
+    _, _, results = supervisor.run("my flight got cancelled help", [])
+
+    assert results == {}
+
+
+def test_a_failed_agent_leaves_its_key_out(monkeypatch):
+    monkeypatch.setattr(documentation_agent, "run",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    _, _, results = supervisor.run(COMPLETE, [])
+
+    assert "rights" not in results
+    assert "flight" in results
+
+
+def test_earlier_options_reach_the_refinement_call():
+    history = [{"prompt": COMPLETE, "response": "a plan",
+                "results": {"flight": {"options": [{"id": "F1", "flight_number": "LH 687",
+                                                    "depart": "2026-08-16T09:40"}],
+                                       "recommended_id": "F1"}}}]
+    _, steps, _ = supervisor.run("what else was there?", history)
+
+    assert "LH 687" in steps[0]["prompt"]["user_prompt"]
+
+
+def test_a_question_answered_from_earlier_options_dispatches_nobody():
+    history = [{"prompt": COMPLETE, "response": "a plan",
+                "results": {"flight": {"options": [{"id": "F1", "flight_number": "LH 687"}],
+                                       "recommended_id": "F1"}}}]
+    _, steps, _ = supervisor.run("never mind, thanks", history)
+
+    # Re-running a search for something already found costs time and money.
+    assert modules_of(steps) == ["Supervisor", "Supervisor"]
+
+
+def test_a_turn_without_results_is_not_a_crash():
+    history = [{"prompt": "hello", "response": "hi"}]
+
+    assert supervisor._prior_results_block(history) == []
+
+
+def test_only_the_most_recent_results_are_shown():
+    history = [
+        {"prompt": "a", "response": "a", "results": {"flight": {
+            "options": [{"id": "F1", "flight_number": "OLD 111"}], "recommended_id": "F1"}}},
+        {"prompt": "b", "response": "b", "results": {"flight": {
+            "options": [{"id": "F1", "flight_number": "NEW 222"}], "recommended_id": "F1"}}},
+    ]
+    block = "\n".join(supervisor._prior_results_block(history))
+
+    # History is re-sent on every call of every turn.
+    assert "NEW 222" in block
+    assert "OLD 111" not in block
 
 
 if __name__ == "__main__":

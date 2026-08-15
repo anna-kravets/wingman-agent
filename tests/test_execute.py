@@ -126,7 +126,7 @@ def test_prior_turns_reach_the_supervisor(monkeypatch):
     seen = {}
     monkeypatch.setattr(
         supervisor, "run",
-        lambda prompt, history, *, local_time=None: (seen.update(history=list(history)), ("ok", []))[1],
+        lambda prompt, history, *, local_time=None: (seen.update(history=list(history)), ("ok", [], {}))[1],
     )
 
     client.post("/api/execute", json={"prompt": "follow up", "conversation_id": "c1"})
@@ -176,6 +176,24 @@ def test_history_save_failure_does_not_discard_an_agent_response(monkeypatch):
     assert body["status"] == "ok"
 
 
+def test_the_agents_results_are_stored_on_the_turn(monkeypatch):
+    store = {"c1": []}
+
+    monkeypatch.setattr(conversation, "load_history",
+                        lambda owner_id, conversation_id: list(store.get(conversation_id, [])))
+    monkeypatch.setattr(conversation, "save_history",
+                        lambda owner_id, conversation_id, history, title:
+                            store.__setitem__(conversation_id, history))
+    monkeypatch.setattr(
+        supervisor, "run",
+        lambda prompt, history, *, local_time=None: ("ok", [], {"flight": {"options": []}}),
+    )
+
+    client.post("/api/execute", json={"prompt": COMPLETE, "conversation_id": "c1"})
+
+    assert store["c1"][-1]["results"] == {"flight": {"options": []}}
+
+
 def test_anonymous_cookie_scopes_conversation_listing(monkeypatch):
     seen_owners = []
     monkeypatch.setattr(
@@ -217,7 +235,7 @@ def test_the_browsers_local_time_reaches_the_supervisor(monkeypatch):
     seen = {}
     monkeypatch.setattr(
         supervisor, "run",
-        lambda prompt, history, *, local_time=None: (seen.update(when=local_time), ("ok", []))[1],
+        lambda prompt, history, *, local_time=None: (seen.update(when=local_time), ("ok", [], {}))[1],
     )
 
     client.post("/api/execute", json={"prompt": COMPLETE, "local_time": "2026-03-04T05:06:07"})
@@ -229,7 +247,7 @@ def test_an_offset_is_reduced_to_the_wall_clock_reading(monkeypatch):
     seen = {}
     monkeypatch.setattr(
         supervisor, "run",
-        lambda prompt, history, *, local_time=None: (seen.update(when=local_time), ("ok", []))[1],
+        lambda prompt, history, *, local_time=None: (seen.update(when=local_time), ("ok", [], {}))[1],
     )
 
     client.post("/api/execute", json={"prompt": COMPLETE, "local_time": "2026-03-04T05:06:07+03:00"})
@@ -242,7 +260,7 @@ def test_an_unusable_local_time_falls_back_to_the_server_clock(monkeypatch):
     seen = {}
     monkeypatch.setattr(
         supervisor, "run",
-        lambda prompt, history, *, local_time=None: (seen.update(when=local_time), ("ok", []))[1],
+        lambda prompt, history, *, local_time=None: (seen.update(when=local_time), ("ok", [], {}))[1],
     )
 
     client.post("/api/execute", json={"prompt": COMPLETE, "local_time": "yesterday evening"})

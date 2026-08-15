@@ -50,7 +50,7 @@ structured result the Supervisor consumes, `steps` is every step that agent prod
 order.
 
 ```python
-supervisor.run(prompt: str, history: list[dict], *, local_time: datetime | None = None) -> tuple[str, list[dict]]
+supervisor.run(prompt: str, history: list[dict], *, local_time: datetime | None = None) -> tuple[str, list[dict], dict]
 flight_agent.run(request: dict, history: list[dict])        -> tuple[dict, list[dict]]  # (payload, steps)
 accommodation_agent.run(request, stay_window, history)      -> tuple[dict, list[dict]]
 documentation_agent.run(request: dict, history: list[dict]) -> tuple[dict, list[dict]]
@@ -63,6 +63,12 @@ documentation_agent.run(request: dict, history: list[dict]) -> tuple[dict, list[
 `history` is the conversation's prior turns, `[{"prompt": ..., "response": ...}, ...]`, oldest
 first, already loaded by `api/index.py` — agent code never touches Supabase. The Supervisor decides
 how much of it reaches a prompt (§7).
+
+> A stored turn is `{"prompt", "response", "results"}`. `results` is the third value
+> `supervisor.run` returns — each agent's payload, successful keys only — so a follow-up can be
+> answered from options already paid for. `conversations.history` is `jsonb` and
+> `conversation.list_conversations` reads only `prompt` and `response`, so this needed no schema
+> change.
 
 `request` is what the Supervisor's question-refinement pass extracts from the passenger's message:
 ```python

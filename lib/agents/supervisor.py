@@ -136,9 +136,10 @@ If earlier turns are shown, this is a follow-up. Carry forward every field the p
 already gave — they will not repeat themselves — and set "needs" to only what this message
 actually asks for: a question about times, seats or other departures is ["flight"], one about
 where they sleep is ["stay"], one about baggage, meals, money or what the airline owes is
-["rights"]. Return an empty "needs" when the question can be answered from what is already on
-the table. Re-running the whole crew for a one-line question costs the passenger time and
-costs the project money.
+["rights"]. Return an empty "needs" when the question can be answered from what is already on the table -
+including any options listed under "Options already on the table", which were already found and
+paid for. Re-running a search for something already found costs the passenger time and costs the
+project money.
 """
 
 COMPOSE_SYSTEM_PROMPT = """You are Wingman, writing directly to one passenger whose flight has just been disrupted.
@@ -214,8 +215,37 @@ def _history_block(history: list[dict]) -> list[str]:
     return lines
 
 
+def _prior_results_block(history: list[dict]) -> list[str]:
+    """The options already on the table, identities only.
+
+    The most recent turn that produced any, and nothing more: history is re-sent on
+    every call of every turn, so whole payloads would cost O(n^2) tokens against a $13
+    project budget (`docs/PROJECT_PLAN.md` §7).
+    """
+    prior = next((t.get("results") for t in reversed(history) if t.get("results")), None)
+    if not prior:
+        return []
+
+    lines = ["Options already on the table from earlier in this conversation:"]
+    onward = _options(prior.get("flight"))
+    if onward:
+        lines.append("  flights: " + "; ".join(
+            " ".join(p for p in (o.get("id"), o.get("flight_number"),
+                                 f"departs {o['depart']}" if o.get("depart") else "") if p)
+            for o in onward))
+    stays = _options(prior.get("stay"))
+    if stays:
+        lines.append("  stays: " + "; ".join(
+            " ".join(p for p in (o.get("id"), o.get("name"),
+                                 f"{o['distance_km']} km" if o.get("distance_km") is not None else "")
+                     if p)
+            for o in stays))
+    return lines if len(lines) > 1 else []
+
+
 def _refine_prompt(prompt: str, history: list[dict]) -> str:
     lines = _history_block(history)
+    lines += _prior_results_block(history)
     if lines:
         lines.append("")
     lines.append(f"Passenger's message: {prompt.strip()}")
@@ -524,6 +554,9 @@ def _compose_prompt(request: dict, digest: str, history: list[dict]) -> str:
     block = _history_block(history)
     if block:
         lines += [""] + block
+    prior = _prior_results_block(history)
+    if prior:
+        lines += [""] + prior
     if request.get("assumptions"):
         lines += ["", "Assumptions you must state in the plan:"]
         lines += [f"  - {a}" for a in request["assumptions"]]
@@ -551,8 +584,12 @@ def _compose(
 
 
 def run(prompt: str, history: list[dict], *,
-        local_time: datetime | None = None) -> tuple[str, list[dict]]:
-    """Returns (response_text, steps) — see `docs/PROJECT_PLAN.md` §1."""
+        local_time: datetime | None = None) -> tuple[str, list[dict], dict]:
+    """Returns (response_text, steps, results) — see `docs/PROJECT_PLAN.md` §1.
+
+    `results` is what each agent came back with, so a follow-up can be answered from
+    options already paid for instead of re-dispatching for them.
+    """
     history = _trim(history)
     steps: list[dict] = []
 
@@ -579,7 +616,7 @@ def run(prompt: str, history: list[dict], *,
         ))
         opener = ("Before I can help, I need to check a couple of things:" if blocking
                   else "Before I can help, I need a couple of details:")
-        return opener + "\n" + "\n".join(f"  - {q}" for q in asked), steps
+        return opener + "\n" + "\n".join(f"  - {q}" for q in asked), steps, {}
 
     results: dict = {}
     failures: list[str] = []
@@ -616,4 +653,4 @@ def run(prompt: str, history: list[dict], *,
 
     text, compose_steps = _compose(request, results, failures, history)
     steps.extend(compose_steps)
-    return text, steps
+    return text, steps, results
