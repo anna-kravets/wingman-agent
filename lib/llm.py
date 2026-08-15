@@ -54,7 +54,19 @@ class LLMError(RuntimeError):
         self.passenger_message = passenger_message
 
 
+_OFF = ("0", "false", "no", "off", "")
+
+
+def paid_calls_enabled() -> bool:
+    """Mirrors lib.tools.live_data_enabled. Unset means enabled, so production needs no
+    config. An ad-hoc script sets WINGMAN_ALLOW_LLM=0 and cannot spend, whatever
+    api/index.py's load_dotenv() puts back into the environment."""
+    return os.environ.get("WINGMAN_ALLOW_LLM", "1").strip().lower() not in _OFF
+
+
 def _config() -> tuple[str, str]:
+    if not paid_calls_enabled():
+        raise LLMError("LLM calls are disabled (WINGMAN_ALLOW_LLM=0).")
     key = os.environ.get("LLMOD_API_KEY")
     base = os.environ.get("LLMOD_API_BASE")
     if not key or not base:

@@ -1988,18 +1988,22 @@ Expected: PASS — both `test_the_composing_prompt_never_names_the_inside_of_the
 Run: `.venv/Scripts/python.exe -c "from api.index import app; print('imported ok')"`
 Expected: `imported ok`, no traceback.
 
-Then start the server and POST the grader's shape — no `conversation_id`, no `local_time`:
+Then start the server and POST the grader's shape — no `conversation_id`, no `local_time`. Set
+`WINGMAN_ALLOW_LLM=0` for this check: it is an ad-hoc script running outside the pytest suite, so it
+is exactly the case the budget guard exists for — `load_dotenv()` in `api/index.py` will re-arm
+`LLMOD_API_KEY`/`LLMOD_API_BASE` from the real `.env` on import, and this check has no business
+spending against them.
 
 ```bash
-.venv/Scripts/python.exe -m uvicorn api.index:app --port 8000 &
+WINGMAN_ALLOW_LLM=0 .venv/Scripts/python.exe -m uvicorn api.index:app --port 8000 &
 curl -s -X POST http://localhost:8000/api/execute \
   -H "Content-Type: application/json" \
   -d '{"prompt":"LH318 TLV -> FRA was cancelled at the gate"}' | head -c 400
 ```
 
-Expected: a JSON object with exactly `status`, `error`, `response`, `steps`. Without `LLMOD_API_KEY`
-set this returns `status: "error"` with the LLMod configuration message — that is the correct
-outcome and proves the shape. Stop the server afterwards.
+Expected: a JSON object with exactly `status`, `error`, `response`, `steps`. With calls disabled this
+returns `status: "error"` with the disabled-calls message — that is the correct outcome and proves
+the shape without spending anything. Stop the server afterwards.
 
 - [ ] **Step 6: Commit**
 

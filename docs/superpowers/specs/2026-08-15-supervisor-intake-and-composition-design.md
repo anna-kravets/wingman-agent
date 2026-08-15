@@ -42,7 +42,7 @@ back with:" (`:284`). The model echoes what we wrote. It is also never told who 
 | S1 | `local_now` is the **passenger's** wall clock, supplied by the GUI as an optional `local_time` on `/api/execute`, falling back to the server clock | The server clock is UTC on Vercel. It is what the date sync compares, what any date sanity check compares, and what builds the AeroDataBox window — an API that expects **airport-local** time. `flights.py:140` now caches on `after.date()`, so a UTC clock queries the wrong window *and* poisons the cache key under the wrong date. |
 | S2 | `local_now` stays a **naive** ISO string | `flight_agent.py:154-156` computes `datetime.fromisoformat(option["depart"]).replace(tzinfo=None) - datetime.fromisoformat(request["local_now"])`. An offset-aware `local_now` makes that `naive - aware` → `TypeError` on every FlightAgent turn. Carrying the offset buys nothing: every consumer wants wall-clock local time. |
 | S3 | Sanity checking is **hybrid** — the model reports semantic conflicts in the same refinement call, Python re-checks anything that is arithmetic | Zero extra LLM calls. The model is the only thing that can see "today, 11th of November" as a self-contradiction; it is also the thing that gets date arithmetic quietly wrong, which is exactly the case being fixed. Each side does what it is reliable at. |
-| S4 | **Hard conflicts block dispatch, soft ones proceed with a stated assumption.** Severity is a fixed field list in Python | A wrong incident date corrupts the flight window *and* the entitlement clock, so asking is cheaper than a confident wrong plan. Bouncing a stressed passenger over a cosmetic mismatch is the friction this product exists to remove. |
+| S4 | **Hard conflicts block dispatch, soft ones proceed with a stated assumption.** Severity is a fixed field list in Python. `BLOCKING_CONFLICTS = {"route", "stranded_at"}` only — **reversed same day:** `incident_time` was in this set too, but nothing downstream needs it exact (the flight window comes from `local_now`, not `incident_time`), so a disruption reported weeks late — the product's own core case — was being asked a question with no right answer, because the date was right. It is now soft: stated as an assumption and cleared, same as `arrive_by` | A route that cannot exist or an airport nobody can look up leaves the crew nothing to search against, so asking is cheaper than a confident wrong plan. Bouncing a stressed passenger over a cosmetic mismatch — or a valid, merely late, disruption — is the friction this product exists to remove. |
 | S5 | The gate **reuses `flights.route_problem`** rather than reimplementing route checks | It already catches `origin == destination` and unknown IATA codes, in passenger-ready wording, tested. It just runs too late — inside `FlightAgent.run`, after the gate, where it raises and the passenger gets a dead end instead of a question. |
 | S6 | `_digest` consumes **every** field in the new payloads and the two deprecated fields are deleted | The contract in `PROJECT_PLAN.md:97-119`. `phone` in particular hands the passenger the one job neither agent can do — confirming a room and a rate. |
 | S7 | `caveats` are **routed by prefix, never printed** | Both agents state "`caveats` is for the assistant coordinating this plan, not the passenger". `NOTE:` folds into the prose, `CONFIRM:` surfaces before the recommendation, `ASK:` becomes the question the plan closes on. |
@@ -124,8 +124,17 @@ months later, but "a bed tonight" for a three-week-old disruption is nonsense.
 ### Blocking vs soft (S4)
 
 ```python
-BLOCKING_CONFLICTS = {"incident_time", "route", "stranded_at"}
+BLOCKING_CONFLICTS = {"route", "stranded_at"}
 ```
+
+**Reversed same day.** `incident_time` was in this set at first, on the theory that a wrong incident
+date corrupts the flight window and the entitlement clock. It does not: the flight window is built
+from `local_now` (`_stay_window`), never from `incident_time`, whose only consumer anywhere is one
+informational line in `documentation_agent.py:129`. Blocking on it meant a disruption more than
+`INCIDENT_PAST_LIMIT_DAYS` old — the product's own core "compensation discovered weeks later" case —
+was asked *"You said the flight was on X, but right now it is Y. Which is right?"*, a question with
+no right answer, because the date **is** right. Re-extraction flagged it again on the next turn, so
+there was no way through. `incident_time` now behaves like any other soft conflict.
 
 Blocking conflicts join `missing` at the existing gate (`supervisor.py:324`) — same one-call-not-seven
 economics, and the same exemption when `needs` is empty, so a follow-up is never interrogated for
@@ -135,7 +144,6 @@ Question text is slot-filled, no second LLM call:
 
 ```python
 CONFLICT_QUESTIONS = {
-    "incident_time": "You said the flight was on {stated}, but right now it is {now}. Which is right?",
     "route": "{reason}",  # route_problem already writes a passenger-ready sentence,
                           # sentence-cased on use: its reasons start lower-case by design,
                           # because today they are interpolated after "FlightAgent: ".
@@ -148,7 +156,8 @@ CONFLICT_QUESTIONS = {
 Soft conflicts do two things: record a sentence in `request["assumptions"]`, which the compose prompt
 renders so the plan states it out loud, and **null the field** where keeping it would poison a
 downstream prompt — an `arrive_by` in the past becomes "as soon as possible" rather than an
-impossible deadline handed to FlightAgent.
+impossible deadline handed to FlightAgent, and an `incident_time` that reads as suspiciously far away
+is dropped rather than handed to DocumentationAgent unexplained.
 
 ---
 

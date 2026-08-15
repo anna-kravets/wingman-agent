@@ -149,7 +149,8 @@ def _caveats(request: dict, options: list[dict], candidates: list[dict]) -> list
     original = _normalise(request.get("airline"))
     if original and all(_normalise(o.get("airline_iata")) != original for o in options):
         said.append("NOTE: every option is on a different airline from the one that cancelled, "
-                    "so the ticket may need endorsing over - the entitlements section covers it.")
+                    "so the ticket may need endorsing over - your Contract of Carriage covers "
+                    "whether that's automatic.")
 
     now = datetime.fromisoformat(request["local_now"])
     for option in options:
@@ -157,7 +158,7 @@ def _caveats(request: dict, options: list[dict], candidates: list[dict]) -> list
         minutes = round((departs - now).total_seconds() / 60)
         if 0 <= minutes <= NEAR_DEPARTURE_MINUTES:
             said.append(f"CONFIRM: {option['flight_number']} leaves in about {minutes} minutes - "
-                        f"check the passenger can reach the gate in time.")
+                        f"check you can reach the gate in time.")
             break
 
     if any(o.get("arrives_next_day") for o in options):

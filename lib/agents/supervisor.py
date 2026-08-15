@@ -83,16 +83,20 @@ QUESTIONS = {
     "stranded_at": "Which airport are you at right now?",
 }
 
-# A wrong date corrupts the flight window and the entitlement clock alike, so it is worth
-# a round trip. An airline name that disagrees with a flight number is not.
-BLOCKING_CONFLICTS = {"incident_time", "route", "stranded_at"}
+# A route that cannot exist or an airport nobody can look up leaves the crew nothing to
+# search against, so it is worth a round trip. incident_time used to block here too, but
+# nothing downstream needs it to be exactly right — the flight window comes from
+# local_now (`_stay_window`), and incident_time's only consumer anywhere is one
+# informational line in documentation_agent.py. A disruption reported weeks late is the
+# product's own core case, not a mistake to interrogate: the date is usually right.
+BLOCKING_CONFLICTS = {"route", "stranded_at"}
 
-# Not worth asking about, but a field that cannot be true must not reach an agent's prompt
-# either. Anything listed here is cleared, and the assumption is stated in the plan.
-CLEARED_ON_CONFLICT = {"arrive_by"}
+# Not worth asking about, but a field that cannot be true (arrive_by) or merely reads as
+# unusual (incident_time, now that it no longer blocks) must not reach an agent's prompt
+# unexplained. Anything listed here is cleared, and the assumption is stated in the plan.
+CLEARED_ON_CONFLICT = {"arrive_by", "incident_time"}
 
 CONFLICT_QUESTIONS = {
-    "incident_time": "You said the flight was on {stated}, but right now it is {now}. Which is right?",
     "stranded_at": "I could not find an airport with the code {stated}. Which airport are you at?",
 }
 
@@ -218,11 +222,17 @@ def _history_block(history: list[dict]) -> list[str]:
 def _prior_results_block(history: list[dict]) -> list[str]:
     """The options already on the table, identities only.
 
-    The most recent turn that produced any, and nothing more: history is re-sent on
-    every call of every turn, so whole payloads would cost O(n^2) tokens against a $13
-    project budget (`docs/PROJECT_PLAN.md` §7).
+    Merged per key, most recent turn wins: a flight-only follow-up must not shadow the
+    stay found two turns ago, or a third turn re-dispatches AccommodationAgent for a
+    room already found and paid for. Only identities, not whole payloads: history is
+    re-sent on every call of every turn, so full payloads would cost O(n^2) tokens
+    against a $13 project budget (`docs/PROJECT_PLAN.md` §7).
     """
-    prior = next((t.get("results") for t in reversed(history) if t.get("results")), None)
+    prior: dict = {}
+    for turn in history:                       # oldest first, so later turns win per key
+        found = turn.get("results") if isinstance(turn, dict) else None
+        if isinstance(found, dict):
+            prior.update(found)
     if not prior:
         return []
 
@@ -243,11 +253,12 @@ def _prior_results_block(history: list[dict]) -> list[str]:
     return lines if len(lines) > 1 else []
 
 
-def _refine_prompt(prompt: str, history: list[dict]) -> str:
+def _refine_prompt(prompt: str, history: list[dict], local_now: str) -> str:
     lines = _history_block(history)
     lines += _prior_results_block(history)
     if lines:
         lines.append("")
+    lines.append(f"Current local date and time: {local_now}")
     lines.append(f"Passenger's message: {prompt.strip()}")
     return "\n".join(lines)
 
@@ -392,7 +403,7 @@ def _extract_request(prompt: str, history: list[dict], local_now: str) -> tuple[
     parsed, step = llm.call(
         MODULE,
         REFINE_SYSTEM_PROMPT,
-        _refine_prompt(prompt, history),
+        _refine_prompt(prompt, history, local_now),
         expect_json=True,
         max_completion_tokens=REFINE_MAX_COMPLETION_TOKENS,
     )

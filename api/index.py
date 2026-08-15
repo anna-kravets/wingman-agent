@@ -116,8 +116,8 @@ def model_architecture():
     return FileResponse(ARCHITECTURE_PNG, media_type="image/png")
 
 
-def _error(message: str) -> dict:
-    return {"status": "error", "error": message, "response": None, "steps": []}
+def _error(message: str, steps: list[dict] | None = None) -> dict:
+    return {"status": "error", "error": message, "response": None, "steps": steps or []}
 
 
 def _local_time(value) -> datetime | None:
@@ -209,7 +209,12 @@ async def execute(request: Request, response: Response):
     try:
         response_text, steps, results = supervisor.run(prompt, history, local_time=local_time)
     except Exception as exc:
-        return _error(f"The agent failed while handling the request: {exc}")
+        # The cause is ours, not the passenger's — it goes to the log, not the response.
+        # A call that was made and then failed is still a call: exc.steps (lib.llm.LLMError)
+        # keeps it in the trace even though the turn as a whole failed.
+        logger.exception("The agent failed while handling the request")
+        return _error("Something went wrong while working on your plan. Please try again.",
+                      getattr(exc, "steps", []))
 
     if conversation_id:
         turn = {"prompt": prompt, "response": response_text, "results": results}

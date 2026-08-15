@@ -62,6 +62,15 @@ def test_unparseable_json_carries_the_step(monkeypatch):
     assert "expected JSON" in step["response"]["error"]
 
 
+def test_the_allow_llm_guard_blocks_a_call_whatever_load_dotenv_put_back(monkeypatch):
+    # An ad-hoc script sets this to stop itself spending against the $13 budget, even
+    # though api/index.py's load_dotenv() has already re-armed LLMOD_API_KEY/_BASE.
+    monkeypatch.setenv("WINGMAN_ALLOW_LLM", "0")
+
+    with pytest.raises(llm.LLMError, match="disabled"):
+        llm.call("Supervisor", "sys", "user")
+
+
 def test_successful_call_returns_text_and_a_step(monkeypatch):
     def ok(*args, **kwargs):
         return httpx.Response(

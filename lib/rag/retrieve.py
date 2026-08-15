@@ -11,6 +11,7 @@ from typing import Any
 from langchain_core.documents import Document
 from pinecone import Pinecone
 
+from lib.llm import paid_calls_enabled
 from lib.rag.coverage import (
     CoverageReport,
     coverage_report,
@@ -445,6 +446,11 @@ class PineconeRetriever:
 
 @lru_cache(maxsize=1)
 def _production_retriever() -> PineconeRetriever:
+    # Same guard as lib.llm._config, read at call time so api/index.py's load_dotenv()
+    # cannot re-arm it: this path spends embeddings and Pinecone queries and reads
+    # LLMOD_API_KEY directly, without going through lib.llm.call.
+    if not paid_calls_enabled():
+        raise ValueError("Paid retrieval is disabled (WINGMAN_ALLOW_LLM=0).")
     api_key = _required("LLMOD_API_KEY")
     base_url = _required("LLMOD_API_BASE").rstrip("/")
     pinecone_key = _required("PINECONE_API_KEY")

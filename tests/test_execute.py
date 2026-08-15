@@ -102,7 +102,25 @@ def test_agent_failure_is_reported_in_the_error_shape(monkeypatch):
 
     assert response["status"] == "error"
     assert response["response"] is None
-    assert "boom" in response["error"]
+    # The raw cause is ours, not a stranded passenger's.
+    assert "boom" not in response["error"]
+    assert len(response["error"].split()) > 3
+
+
+def test_a_failed_calls_step_survives_into_the_top_level_error(monkeypatch):
+    from lib.llm import LLMError
+    from lib.steps import make_step
+
+    failed_step = make_step("Supervisor", "sys", "user", {"error": "timed out"})
+
+    def explode(*args, **kwargs):
+        raise LLMError("Supervisor: timed out", steps=[failed_step])
+
+    monkeypatch.setattr(supervisor, "run", explode)
+    response = client.post("/api/execute", json={"prompt": COMPLETE}).json()
+
+    assert response["status"] == "error"
+    assert response["steps"] == [failed_step]
 
 
 # --- multi-turn -----------------------------------------------------------------
@@ -192,6 +210,24 @@ def test_the_agents_results_are_stored_on_the_turn(monkeypatch):
     client.post("/api/execute", json={"prompt": COMPLETE, "conversation_id": "c1"})
 
     assert store["c1"][-1]["results"] == {"flight": {"options": []}}
+
+
+def test_results_from_one_turn_reach_the_next_turns_prompt(monkeypatch, fake_search_data):
+    # test_the_agents_results_are_stored_on_the_turn proves storage with supervisor.run
+    # faked out; test_supervisor.py proves prior results reach a prompt with history
+    # hand-built. Neither exercises the actual round trip through /api/execute twice —
+    # this does, with the real Supervisor and fake_search_data so FlightAgent has real
+    # candidates to choose from.
+    store = {"c1": []}
+    monkeypatch.setattr(conversation, "load_history", lambda o, c: list(store.get(c, [])))
+    monkeypatch.setattr(conversation, "save_history",
+                        lambda o, c, history, title: store.__setitem__(c, history))
+
+    client.post("/api/execute", json={"prompt": COMPLETE, "conversation_id": "c1"})
+    body = client.post("/api/execute",
+                       json={"prompt": "what else was there?", "conversation_id": "c1"}).json()
+
+    assert "LH 687" in body["steps"][0]["prompt"]["user_prompt"]
 
 
 def test_anonymous_cookie_scopes_conversation_listing(monkeypatch):

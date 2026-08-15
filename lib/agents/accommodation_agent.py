@@ -132,13 +132,13 @@ def _caveats(options: list[dict]) -> list[str]:
 
     if not any(o.get("phone") for o in options):
         said.append("ASK: none of these has a phone number listed, so nobody can confirm a room "
-                    "tonight - the passenger may prefer to ask the airline desk instead.")
+                    "tonight - you may prefer to ask the airline desk instead.")
 
     nearest = min((o["distance_km"] for o in options if o.get("distance_km") is not None),
                   default=None)
     if nearest is not None and nearest > FAR_FROM_TERMINAL_KM:
-        said.append(f"CONFIRM: the nearest option is {nearest} km from the terminal - check the "
-                    f"passenger can still make the departure.")
+        said.append(f"CONFIRM: the nearest option is {nearest} km from the terminal - check you "
+                    f"can still make the departure.")
 
     if all(o.get("kind") for o in options):
         said.append("NOTE: no ordinary hotels were found near this airport - these are hostels, "

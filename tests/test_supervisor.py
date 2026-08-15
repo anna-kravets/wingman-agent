@@ -411,6 +411,13 @@ def test_without_a_clock_the_server_time_is_used():
     assert f"Local time now: {date.today().isoformat()}" in flight["prompt"]["user_prompt"]
 
 
+def test_the_refinement_call_is_told_what_day_it_is():
+    when = datetime(2026, 8, 15, 22, 15)
+    _, steps, _ = supervisor.run(COMPLETE, [], local_time=when)
+
+    assert "Current local date and time: 2026-08-15T22:15:00" in steps[0]["prompt"]["user_prompt"]
+
+
 def test_the_incident_time_survives_extraction():
     request = supervisor._request_from(
         {"incident_time": "2026-08-15T18:00"}, False, "2026-08-15T22:15:00")
@@ -546,6 +553,24 @@ def test_a_blocking_conflict_with_nothing_to_dispatch_does_not_interrogate():
     assert "Before I can help" not in text
 
 
+def test_a_six_week_old_disruption_still_gets_a_plan(monkeypatch):
+    # The product's own core case — compensation discovered weeks later. The date is
+    # right, so there is nothing to ask about and the crew must still run.
+    parsed = {"airline": "LH", "flight_number": "LH318", "origin": "TLV", "destination": "FRA",
+              "disruption": "cancelled", "stranded_at": "TLV",
+              "incident_time": "2026-07-04T09:00:00", "needs": list(supervisor.NEEDS)}
+    request = supervisor._request_from(parsed, False, "2026-08-15T22:15:00")
+    refine_step = make_step("Supervisor", "refine", "test", request)
+
+    monkeypatch.setattr(supervisor, "_extract_request",
+                        lambda prompt, history, local_now: (request, refine_step))
+
+    text, steps, _ = supervisor.run(COMPLETE, [], local_time=datetime(2026, 8, 15, 22, 15))
+
+    assert "ONWARD FLIGHT" in text
+    assert set(modules_of(steps)) == MODULES
+
+
 def test_a_soft_conflict_proceeds_and_states_the_assumption():
     request = supervisor._request_from(
         {"origin": "TLV", "destination": "FRA", "stranded_at": "TLV",
@@ -565,6 +590,20 @@ def test_a_field_that_cannot_be_true_never_reaches_an_agent():
 
     # An impossible deadline handed to FlightAgent is worse than no deadline.
     assert request["arrive_by"] is None
+
+
+def test_an_incident_time_conflict_is_soft_now_stated_and_cleared():
+    # incident_time left BLOCKING_CONFLICTS: the date is usually right, and nothing
+    # downstream needs it to be exact, so it is an assumption, not a question.
+    request = supervisor._request_from(
+        {"origin": "TLV", "destination": "FRA", "stranded_at": "TLV",
+         "incident_time": "2026-07-04T09:00:00"},
+        False, "2026-08-15T22:15:00")
+
+    assert request["assumptions"] == [
+        "They said 2026-07-04T09:00:00, but that was 42 days ago. Working without it."
+    ]
+    assert request["incident_time"] is None
 
 
 def test_a_blocking_conflict_produces_no_assumption():
@@ -655,6 +694,27 @@ def test_no_caveats_means_no_empty_headings():
     assert "WORTH KNOWING" not in text
 
 
+def test_caveats_speak_to_the_passenger_directly():
+    # _digest is also what the passenger reads when the composing call fails, so a
+    # caveat written about "the passenger" in the third person must never reach it.
+    results = {
+        "flight": {"options": [{"id": "F1"}], "recommended_id": "F1", "caveats": [
+            "CONFIRM: LH 687 leaves in about 40 minutes - check you can reach the gate in time.",
+            "NOTE: every option is on a different airline from the one that cancelled, so the "
+            "ticket may need endorsing over - your Contract of Carriage covers whether that's "
+            "automatic.",
+        ]},
+        "stay": {"options": [{"id": "H1"}], "recommended_id": "H1", "caveats": [
+            "ASK: none of these has a phone number listed, so nobody can confirm a room tonight "
+            "- you may prefer to ask the airline desk instead.",
+            "CONFIRM: the nearest option is 17.0 km from the terminal - check you can still "
+            "make the departure.",
+        ]},
+    }
+
+    assert "the passenger" not in supervisor._digest(results, [])
+
+
 # --- results across turns ---
 
 
@@ -690,13 +750,16 @@ def test_earlier_options_reach_the_refinement_call():
     assert "LH 687" in steps[0]["prompt"]["user_prompt"]
 
 
-def test_a_question_answered_from_earlier_options_dispatches_nobody():
+def test_a_follow_up_matching_no_need_words_dispatches_nobody():
+    # This pins the keyword fake's own narrowing (`FOLLOW_UP_WORDS` finds nothing in
+    # "never mind, thanks", so `needs` comes back empty) — not that the stored results
+    # were read. The round trip that actually exercises stored results reaching a
+    # prompt is `tests/test_execute.py::test_results_from_one_turn_reach_the_next_turns_prompt`.
     history = [{"prompt": COMPLETE, "response": "a plan",
                 "results": {"flight": {"options": [{"id": "F1", "flight_number": "LH 687"}],
                                        "recommended_id": "F1"}}}]
     _, steps, _ = supervisor.run("never mind, thanks", history)
 
-    # Re-running a search for something already found costs time and money.
     assert modules_of(steps) == ["Supervisor", "Supervisor"]
 
 
@@ -718,6 +781,24 @@ def test_only_the_most_recent_results_are_shown():
     # History is re-sent on every call of every turn.
     assert "NEW 222" in block
     assert "OLD 111" not in block
+
+
+def test_a_narrowed_follow_up_does_not_shadow_an_earlier_stay():
+    # Turn 1 finds a flight and a stay; turn 2 is a flight-only follow-up. Turn 3 must
+    # still see the stay from turn 1 — it was found and paid for, not superseded.
+    history = [
+        {"prompt": "a", "response": "a plan", "results": {
+            "flight": {"options": [{"id": "F1", "flight_number": "LH 687"}], "recommended_id": "F1"},
+            "stay": {"options": [{"id": "H1", "name": "Airport Plaza"}], "recommended_id": "H1"},
+        }},
+        {"prompt": "anything earlier?", "response": "here is an earlier one", "results": {
+            "flight": {"options": [{"id": "F2", "flight_number": "LY 357"}], "recommended_id": "F2"},
+        }},
+    ]
+    block = "\n".join(supervisor._prior_results_block(history))
+
+    assert "LY 357" in block
+    assert "Airport Plaza" in block
 
 
 if __name__ == "__main__":
