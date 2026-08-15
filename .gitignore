@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 *.pyo
 *.egg-info/
+.gitignore
 .pytest_cache/
 .coverage
 htmlcov/
@@ -32,3 +33,6 @@ live-test-output/
 
 # project guidelines
 guidelines/
+PLAN_PERSON_A.local.md
+# Subagent-driven development scratch
+.superpowers/
