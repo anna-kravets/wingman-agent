@@ -19,6 +19,7 @@ from datetime import datetime
 
 from lib import llm
 from lib.agents import accommodation_agent, documentation_agent, flight_agent
+from lib.tools import airports, flights
 
 MODULE = "Supervisor"
 
@@ -28,6 +29,13 @@ MODULE = "Supervisor"
 HISTORY_TURNS = 6
 
 REQUIRED_FIELDS = ("flight_number", "origin", "destination", "disruption", "stranded_at")
+
+# Generous on purpose: airlines cancel a fortnight ahead, and flagging that would bounce
+# a real passenger. It still catches "today, 11th of November" read in August.
+INCIDENT_FUTURE_LIMIT_DAYS = 30
+# Not about whether the claim is valid — it is, for months — but about whether a plan
+# that finds a bed tonight makes any sense for it.
+INCIDENT_PAST_LIMIT_DAYS = 14
 
 NEEDS = ("flight", "stay", "rights")
 DISRUPTIONS = ("delayed", "cancelled", "denied_boarding")
@@ -56,6 +64,7 @@ Return a JSON object only, no prose:
  "disruption": "delayed" | "cancelled" | "denied_boarding" | null,
  "stranded_at", "party_size", "arrive_by", "incident_time",
  "needs": ["flight", "stay", "rights"],
+ "conflicts": [{"field", "stated", "reason"}],
  "missing": [field names]}
 
 "stranded_at" is an airport, not a place inside one — give its IATA code where you can work it
@@ -65,6 +74,13 @@ the word "origin" itself.
 "incident_time" is when the disrupted flight was scheduled to leave, in ISO 8601. Give it whenever
 the passenger says or implies it, resolving relative words against the current date and time you are
 given. Leave it null if they did not say - it is useful, not required.
+
+"conflicts" is for anything the passenger stated that cannot be true. You are given the current
+local date and time below. If they write a relative word - "today", "this morning", "tonight" -
+next to a date that is not that day, that is a conflict on "incident_time". So is an airline that
+does not match the flight number they gave, or an airport that contradicts the route they described.
+Give {"field": which one, "stated": what they wrote, "reason": why it cannot be right}. Report only
+what you are sure of, and leave it empty otherwise; date arithmetic is re-checked separately.
 
 On a first message "needs" is ["flight", "stay", "rights"]. Leave one out only when the
 passenger rules it out in words — "I don't need a hotel", "I just want to know what I'm owed".
@@ -166,6 +182,56 @@ def _party_size(value) -> int:
     return size if size > 0 else 1
 
 
+def _when(value) -> datetime | None:
+    """A stated time as a naive datetime, or None if it is absent or unparseable."""
+    try:
+        return datetime.fromisoformat(value).replace(tzinfo=None)
+    except (TypeError, ValueError):
+        return None
+
+
+def _conflicts(request: dict) -> list[dict]:
+    """What the passenger stated that cannot be true, from arithmetic alone.
+
+    The model reports the contradictions only it can see — a relative word next to a
+    date that is not that day. This reports the ones it gets quietly wrong. Both lists
+    are merged in `_request_from`, with these winning on any shared field.
+    """
+    now = _when(request.get("local_now"))
+    found: list[dict] = []
+
+    incident = _when(request.get("incident_time"))
+    if now and incident:
+        days = (incident.date() - now.date()).days
+        if days > INCIDENT_FUTURE_LIMIT_DAYS:
+            found.append({"field": "incident_time", "stated": request["incident_time"],
+                          "reason": f"that is {days} days from now"})
+        elif -days > INCIDENT_PAST_LIMIT_DAYS:
+            found.append({"field": "incident_time", "stated": request["incident_time"],
+                          "reason": f"that was {-days} days ago"})
+
+    origin, destination = request.get("origin"), request.get("destination")
+    # Only when both are present: a half-stated route is already a missing field, and
+    # asking about it twice in two different wordings helps nobody.
+    if origin and destination:
+        problem = flights.route_problem(origin, destination)
+        if problem:
+            found.append({"field": "route", "stated": f"{origin} to {destination}",
+                          "reason": problem})
+
+    stranded = request.get("stranded_at")
+    if stranded and not airports.lookup(stranded):
+        found.append({"field": "stranded_at", "stated": stranded,
+                      "reason": "that is not an airport code I can look up"})
+
+    arrive_by = _when(request.get("arrive_by"))
+    if now and arrive_by and arrive_by < now:
+        found.append({"field": "arrive_by", "stated": request["arrive_by"],
+                      "reason": "that deadline has already passed"})
+
+    return found
+
+
 def _request_from(parsed: dict, follow_up: bool, local_now: str) -> dict:
     """The model's JSON forced into the locked request shape (`docs/PROJECT_PLAN.md` §1).
 
@@ -194,6 +260,18 @@ def _request_from(parsed: dict, follow_up: bool, local_now: str) -> dict:
     # The model has no clock, and the date sync runs on this. It is the passenger's
     # wall clock when their browser sent one, because the server's is UTC on Vercel.
     request["local_now"] = local_now
+
+    reported = parsed.get("conflicts")
+    from_model = [
+        {"field": _text(c.get("field")) or "", "stated": _text(c.get("stated")) or "",
+         "reason": _text(c.get("reason")) or ""}
+        for c in (reported if isinstance(reported, list) else [])
+        if isinstance(c, dict) and _text(c.get("field")) and _text(c.get("reason"))
+    ]
+    checked = _conflicts(request)
+    claimed = {c["field"] for c in checked}
+    request["conflicts"] = checked + [c for c in from_model if c["field"] not in claimed]
+
     request["missing"] = [f for f in REQUIRED_FIELDS if not request.get(f)]
     return request
 

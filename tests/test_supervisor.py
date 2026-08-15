@@ -322,5 +322,98 @@ def test_an_absent_incident_time_is_none_not_missing():
     assert "incident_time" not in request["missing"]
 
 
+# --- sanity checks ---------------------------------------------------------------
+
+
+def request_stating(**fields) -> dict:
+    base = {"local_now": "2026-08-15T22:15:00", "origin": "TLV", "destination": "FRA",
+            "stranded_at": "TLV", "incident_time": None, "arrive_by": None}
+    return {**base, **fields}
+
+
+def fields_of(conflicts):
+    return [c["field"] for c in conflicts]
+
+
+def test_a_date_months_away_is_a_conflict():
+    # The motivating case: "today, 11th of November" read on 15 August.
+    found = supervisor._conflicts(request_stating(incident_time="2026-11-11T09:00"))
+
+    assert fields_of(found) == ["incident_time"]
+    assert found[0]["stated"] == "2026-11-11T09:00"
+
+
+def test_a_flight_cancelled_a_fortnight_ahead_is_not_a_conflict():
+    # Airlines cancel in advance. Flagging that would bounce a real passenger.
+    assert supervisor._conflicts(request_stating(incident_time="2026-08-29T09:00")) == []
+
+
+def test_a_disruption_from_last_month_is_a_conflict():
+    # Still a valid claim, but "a bed tonight" for it is nonsense.
+    found = supervisor._conflicts(request_stating(incident_time="2026-07-04T09:00"))
+
+    assert fields_of(found) == ["incident_time"]
+
+
+def test_an_unparseable_incident_time_is_left_alone():
+    # The model's job, not arithmetic's.
+    assert supervisor._conflicts(request_stating(incident_time="last Tuesday")) == []
+
+
+def test_a_route_that_cannot_exist_is_a_conflict():
+    found = supervisor._conflicts(request_stating(origin="TLV", destination="TLV"))
+
+    assert fields_of(found) == ["route"]
+    assert "no flight to look for" in found[0]["reason"]
+
+
+def test_a_half_stated_route_is_left_to_the_missing_fields_gate():
+    # Otherwise the passenger is asked the same thing twice, differently worded.
+    assert supervisor._conflicts(request_stating(origin="TLV", destination=None)) == []
+
+
+def test_an_unknown_airport_is_a_conflict():
+    found = supervisor._conflicts(request_stating(stranded_at="ZZZ"))
+
+    assert fields_of(found) == ["stranded_at"]
+
+
+def test_a_deadline_already_past_is_a_conflict():
+    found = supervisor._conflicts(request_stating(arrive_by="2026-08-14T09:00"))
+
+    assert fields_of(found) == ["arrive_by"]
+
+
+def test_a_clean_request_has_no_conflicts():
+    assert supervisor._conflicts(request_stating()) == []
+
+
+def test_the_models_conflicts_are_kept_alongside_the_checked_ones():
+    parsed = {"origin": "TLV", "destination": "TLV", "stranded_at": "TLV",
+              "conflicts": [{"field": "airline", "stated": "Lufthansa",
+                             "reason": "the flight number LY357 is El Al"}]}
+    request = supervisor._request_from(parsed, False, "2026-08-15T22:15:00")
+
+    assert fields_of(request["conflicts"]) == ["route", "airline"]
+
+
+def test_the_checked_conflict_wins_when_both_name_the_same_field():
+    parsed = {"origin": "TLV", "destination": "TLV", "stranded_at": "TLV",
+              "conflicts": [{"field": "route", "stated": "TLV to TLV",
+                             "reason": "made up by the model"}]}
+    request = supervisor._request_from(parsed, False, "2026-08-15T22:15:00")
+
+    assert fields_of(request["conflicts"]) == ["route"]
+    assert "made up by the model" not in request["conflicts"][0]["reason"]
+
+
+def test_junk_in_the_models_conflicts_is_dropped():
+    parsed = {"origin": "TLV", "destination": "FRA", "stranded_at": "TLV",
+              "conflicts": ["not an object", {"field": "airline"}, {"reason": ""}]}
+    request = supervisor._request_from(parsed, False, "2026-08-15T22:15:00")
+
+    assert request["conflicts"] == []
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))

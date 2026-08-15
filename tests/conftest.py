@@ -95,6 +95,8 @@ def _refine_response(user_prompt: str) -> dict:
         "stranded_at": route.group(1) if route else None,
         "party_size": 1,
         "arrive_by": None,
+        "incident_time": None,
+        "conflicts": [],
         "needs": needs,
     }
 
