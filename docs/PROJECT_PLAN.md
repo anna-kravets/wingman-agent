@@ -71,15 +71,19 @@ how much of it reaches a prompt (§7).
 **Payloads** — the shapes the Supervisor reads. `depart`/`arrive` are ISO 8601 local times and are
 load-bearing: the date sync derives the hotel nights from the chosen flight's departure.
 ```python
-# FlightAgent
-{"options": [{"id", "airline", "flight_number", "origin", "destination",
-              "depart", "arrive", "stops", "fare_conditions", "notes"}],
- "recommended_id": "F1"}
+# FlightAgent   (facts written from the candidate, not the model)
+{"options": [{"id", "airline", "airline_iata", "flight_number", "origin", "destination",
+              "depart", "arrive", "duration_minutes", "arrives_next_day",
+              "terminal", "aircraft", "status", "rebooking", "notes"}],
+ "recommended_id": "F1",
+ "caveats": [str]}
 
 # AccommodationAgent
-{"options": [{"id", "name", "area", "check_in", "check_out", "nights",
-              "price_estimate", "meals_included", "notes"}],
- "recommended_id": "H1"}
+{"options": [{"id", "name", "kind", "distance_km", "city", "address", "phone", "website",
+              "stars", "wheelchair", "check_in", "check_out", "nights",
+              "price_estimate", "meals", "notes"}],
+ "recommended_id": "H1",
+ "caveats": [str]}
 
 # DocumentationAgent
 {"regulation": "EU 261/2004" | "US DOT" | "Israel Aviation Services Law" | "multiple" | "none",
@@ -89,6 +93,34 @@ load-bearing: the date sync derives the hotel nights from the chosen flight's de
 ```
 `source` on each entitlement is what makes the Contract of Carriage differentiator visible in the
 output — cite the clause, not just the regulation.
+
+**Changed 15/8/2026** (agreed at the team meeting; spec:
+`docs/superpowers/specs/2026-08-15-search-agent-payload-refinement-design.md`). For Person A,
+consuming these in `supervisor._digest`:
+
+- **`caveats`** is new on both search agents, `list[str]`, matching `DocumentationAgent`. Every
+  entry opens `NOTE:` (tell the passenger), `ASK:` (only the passenger can answer) or `CONFIRM:`
+  (do not proceed unchecked). The ones that matter are generated in code, not by the model, so
+  they are reliable enough to branch on.
+- **Renamed:** `fare_conditions` → `rebooking` (it never held fare data).
+- **Removed:** `stops` — permanently `0` once direct-only became a decision (D7). `_digest` never
+  read either, so neither removal affects it.
+- **New on flights:** `airline_iata`, `duration_minutes`, `arrives_next_day`, `terminal`,
+  `aircraft`, `status`.
+- **New on stays:** `kind` (present only when it is *not* an ordinary hotel), `distance_km`,
+  `city`, `address`, `phone`, `website`, `stars`, `wheelchair`. **`phone` is the most useful field
+  either agent has** — it is how the passenger settles the two things we cannot, a free room and a
+  real rate.
+- **Widened:** `meals_included: bool` → `meals: "included" | "not_included" | "unknown"`.
+  `unknown` is the honest answer nearly every time; `false` was a lie dressed as data.
+- **Two deprecated fields remain so nothing regresses before your rewrite lands:** `area` still
+  carries the human phrasing (`"2.4 km from the terminal, Lod"`) that `_digest` reads today, and
+  `meals_included` still exists as a boolean. **Delete both once `_digest` reads `distance_km`,
+  `city` and `meals`.**
+- **Optional fields are omitted, not null.** Read with `.get()`; absence means OpenStreetMap or
+  AeroDataBox did not know, which is worth saying rather than hiding.
+- **Every option is now worth forwarding.** `_digest` currently keeps only the recommended one,
+  which is why "compare the two options" cannot work today however good the agents get.
 
 ---
 

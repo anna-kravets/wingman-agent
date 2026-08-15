@@ -40,7 +40,7 @@ The evaluator needs no keys and no database — it reads the saved artifact. Sce
 | **No hotel when none is needed.** A replacement leaving the same day skips `AccommodationAgent` entirely rather than booking a pointless night. | `same-day-no-hotel` |
 | **Prices always read as estimates.** e.g. *"Roughly EUR 110-160 for the night (estimate - not a quoted price)"*. | `price_honesty` passed on `tlv-fra-cancelled`, `overnight-one-night`, `price-question` |
 | **FlightAgent never quotes a fare**, even when asked "how much will this cost me?". | `no_asserted_fare` passed on `price-question` |
-| **Meals are never asserted.** `meals_included` stayed `false` with *"Meals were not confirmed - ask at the desk"*, because OSM had no breakfast tag. | `meals_honesty` passed on `tlv-fra-cancelled`, `overnight-one-night` |
+| **Meals are never asserted.** `meals` reads `unknown` with *"Meals were not confirmed - ask at the desk"* whenever OSM has no breakfast tag, which is nearly always. | `meals_honesty` passed on `tlv-fra-cancelled`, `overnight-one-night` |
 | **Carriage questions are deferred, not guessed.** A ski-bag question produced *"Whether your ticket can be moved across is set by your Contract of Carriage - see the entitlements section"* — no invented allowance. | `deferral` passed on `baggage-followup` |
 | **No booking site is ever named.** | `no_booking_site` passed on all five scenarios that check it |
 | **Conversation history reaches both agents** on follow-up turns. | `history_reached_agents` passed on `baggage-followup`, `price-question`, `earlier-flight-followup`, `compare-options` |
@@ -76,6 +76,22 @@ The general lesson, worth repeating at the meeting: **a fact that decides whethe
 usable belongs in the tool; judgement belongs in the prompt.** The model is a good reasoner and
 an unreliable filter — this is the clearest evidence in the whole exercise of what these agents
 do and do not contribute.
+
+### 2c. The payload was written before we knew how the agents behave
+
+Agreed at the 15/8 meeting and specced separately. Two changes matter beyond the field list:
+
+**The model stopped being asked to transcribe.** It returns a choice and prose; code matches that
+back to the source candidate and writes every factual field. An altered departure time went from
+unlikely to impossible, and an invented option now matches nothing and cannot survive validation.
+The model also emits about five fields per option instead of twelve, which is real money.
+
+**Caveats are generated in code wherever the trigger is a fact** — "only one flight in 48 hours",
+"leaves in 40 minutes", "no phone number anywhere". Section 2a is why: a model that notices
+something in one run of two is not a safety net.
+
+Two deprecated fields (`area`, `meals_included`) carry the old shape until Person A's `_digest`
+rewrite lands, so there is no window in which the passenger sees less than before.
 
 ### 2b. The degradation behaviour was wrong and has been reversed
 
