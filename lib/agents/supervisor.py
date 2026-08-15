@@ -53,6 +53,19 @@ QUESTIONS = {
     "stranded_at": "Which airport are you at right now?",
 }
 
+# A wrong date corrupts the flight window and the entitlement clock alike, so it is worth
+# a round trip. An airline name that disagrees with a flight number is not.
+BLOCKING_CONFLICTS = {"incident_time", "route", "stranded_at"}
+
+# Not worth asking about, but a field that cannot be true must not reach an agent's prompt
+# either. Anything listed here is cleared, and the assumption is stated in the plan.
+CLEARED_ON_CONFLICT = {"arrive_by"}
+
+CONFLICT_QUESTIONS = {
+    "incident_time": "You said the flight was on {stated}, but right now it is {now}. Which is right?",
+    "stranded_at": "I could not find an airport with the code {stated}. Which airport are you at?",
+}
+
 REFINE_SYSTEM_PROMPT = """You read a message from an air passenger whose flight has just been disrupted and turn it into a structured request.
 
 The passenger is stressed and in a hurry, so the message is usually missing things. Extract what is
@@ -106,6 +119,8 @@ they are owed and what to do about it — that is the order they need it in.
 
 State amounts and entitlements only if a crew result supports them, and say which document each came
 from. If part of the crew failed, say plainly what is missing rather than papering over it.
+
+State any assumption you are given, in your own words, so the passenger can correct it.
 
 End by inviting a follow-up: the passenger can compare options or ask about the terms of any one of
 them.
@@ -232,6 +247,21 @@ def _conflicts(request: dict) -> list[dict]:
     return found
 
 
+def _sentence(text: str) -> str:
+    return text[:1].upper() + text[1:] if text else text
+
+
+def _conflict_question(conflict: dict, now: str) -> str:
+    template = CONFLICT_QUESTIONS.get(conflict["field"])
+    if template:
+        return template.format(stated=conflict["stated"], now=now)
+    if conflict["field"] == "route":
+        # route_problem already writes a passenger-ready sentence. It starts lower-case
+        # because today it is interpolated after "FlightAgent: ".
+        return _sentence(conflict["reason"])
+    return f"You said {conflict['stated']} — {conflict['reason']}. Which is right?"
+
+
 def _request_from(parsed: dict, follow_up: bool, local_now: str) -> dict:
     """The model's JSON forced into the locked request shape (`docs/PROJECT_PLAN.md` §1).
 
@@ -271,6 +301,16 @@ def _request_from(parsed: dict, follow_up: bool, local_now: str) -> dict:
     checked = _conflicts(request)
     claimed = {c["field"] for c in checked}
     request["conflicts"] = checked + [c for c in from_model if c["field"] not in claimed]
+
+    request["assumptions"] = []
+    for conflict in request["conflicts"]:
+        if conflict["field"] in BLOCKING_CONFLICTS:
+            continue
+        note = f"They said {conflict['stated']}, but {conflict['reason']}."
+        if conflict["field"] in CLEARED_ON_CONFLICT:
+            request[conflict["field"]] = None
+            note += " Working without it."
+        request["assumptions"].append(note)
 
     request["missing"] = [f for f in REQUIRED_FIELDS if not request.get(f)]
     return request
@@ -366,6 +406,9 @@ def _compose_prompt(request: dict, digest: str, history: list[dict]) -> str:
     block = _history_block(history)
     if block:
         lines += [""] + block
+    if request.get("assumptions"):
+        lines += ["", "Assumptions you must state in the plan:"]
+        lines += [f"  - {a}" for a in request["assumptions"]]
     lines += ["", "What the crew came back with:", digest]
     return "\n".join(lines)
 
@@ -405,15 +448,20 @@ def run(prompt: str, history: list[dict], *,
 
     needs = request["needs"]
 
-    # The gate: never dispatch a crew against a request that is missing what it needs.
-    # Nothing to dispatch means nothing is blocked, so a follow-up answered from the
-    # conversation is never interrogated for details it already gave.
-    if request["missing"] and needs:
-        asked = list(dict.fromkeys(QUESTIONS[f] for f in request["missing"]))
-        text = "Before I can help, I need a couple of details:\n" + "\n".join(
-            f"  - {q}" for q in asked
-        )
-        return text, steps
+    blocking = [c for c in request["conflicts"] if c["field"] in BLOCKING_CONFLICTS]
+
+    # The gate: never dispatch against a request that is missing what the crew needs, or
+    # that states something that cannot be true. Nothing to dispatch means nothing is
+    # blocked, so a follow-up answered from the conversation is never interrogated for
+    # details it already gave.
+    if (request["missing"] or blocking) and needs:
+        asked = list(dict.fromkeys(
+            [_conflict_question(c, request["local_now"]) for c in blocking]
+            + [QUESTIONS[f] for f in request["missing"]]
+        ))
+        opener = ("Before I can help, I need to check a couple of things:" if blocking
+                  else "Before I can help, I need a couple of details:")
+        return opener + "\n" + "\n".join(f"  - {q}" for q in asked), steps
 
     results: dict = {}
     failures: list[str] = []

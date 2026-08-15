@@ -69,8 +69,15 @@ how much of it reaches a prompt (§7).
 {"airline", "flight_number", "origin", "destination",
  "disruption": "delayed" | "cancelled" | "denied_boarding",
  "stranded_at", "party_size", "arrive_by": iso8601 | None,
- "needs": ["flight", "stay", "rights"], "local_now": iso8601}
+ "incident_time": iso8601 | None,
+ "conflicts": [{"field", "stated", "reason"}],
+ "assumptions": [str],
+ "needs": ["flight", "stay", "rights"], "local_now": iso8601, "missing": [field names]}
 ```
+
+> `conflicts` is what the passenger stated that cannot be true — merged from the refinement call and
+> a deterministic re-check. Fields in `supervisor.BLOCKING_CONFLICTS` stop the dispatch and are asked
+> about; the rest become `assumptions`, which the plan states out loud.
 
 **Payloads** — the shapes the Supervisor reads. `depart`/`arrive` are ISO 8601 local times and are
 load-bearing: the date sync derives the hotel nights from the chosen flight's departure.

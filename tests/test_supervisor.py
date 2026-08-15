@@ -415,5 +415,69 @@ def test_junk_in_the_models_conflicts_is_dropped():
     assert request["conflicts"] == []
 
 
+IMPOSSIBLE_ROUTE = "LH318 TLV -> TLV was cancelled at the gate"
+
+
+def test_a_blocking_conflict_asks_instead_of_dispatching():
+    text, steps = supervisor.run(IMPOSSIBLE_ROUTE, [])
+
+    assert "no flight to look for" in text
+    # Same economics as the missing-fields gate: one call, not seven.
+    assert modules_of(steps) == ["Supervisor"]
+
+
+def test_the_conflict_question_reads_as_a_sentence():
+    text, _ = supervisor.run(IMPOSSIBLE_ROUTE, [])
+
+    # route_problem's reasons start lower-case because they are interpolated after
+    # "FlightAgent: " today.
+    assert "The origin and destination are both TLV" in text
+
+
+def test_a_blocking_conflict_with_nothing_to_dispatch_does_not_interrogate():
+    history = [{"prompt": IMPOSSIBLE_ROUTE, "response": "The origin and destination are both TLV"}]
+    text, steps = supervisor.run("never mind, thanks", history)
+
+    assert modules_of(steps) == ["Supervisor", "Supervisor"]
+    assert "Before I can help" not in text
+
+
+def test_a_soft_conflict_proceeds_and_states_the_assumption():
+    request = supervisor._request_from(
+        {"origin": "TLV", "destination": "FRA", "stranded_at": "TLV",
+         "arrive_by": "2026-08-14T09:00"},
+        False, "2026-08-15T22:15:00")
+
+    assert request["assumptions"] == [
+        "They said 2026-08-14T09:00, but that deadline has already passed. Working without it."
+    ]
+
+
+def test_a_field_that_cannot_be_true_never_reaches_an_agent():
+    request = supervisor._request_from(
+        {"origin": "TLV", "destination": "FRA", "stranded_at": "TLV",
+         "arrive_by": "2026-08-14T09:00"},
+        False, "2026-08-15T22:15:00")
+
+    # An impossible deadline handed to FlightAgent is worse than no deadline.
+    assert request["arrive_by"] is None
+
+
+def test_a_blocking_conflict_produces_no_assumption():
+    request = supervisor._request_from(
+        {"origin": "TLV", "destination": "TLV", "stranded_at": "TLV"},
+        False, "2026-08-15T22:15:00")
+
+    # It is being asked about, not assumed around.
+    assert request["assumptions"] == []
+
+
+def test_assumptions_reach_the_composing_call():
+    request = {"assumptions": ["They said X, but Y."], "local_now": "2026-08-15T22:15:00"}
+    prompt = supervisor._compose_prompt(request, "digest", [])
+
+    assert "They said X, but Y." in prompt
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))
