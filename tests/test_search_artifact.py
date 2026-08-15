@@ -54,7 +54,6 @@ GOOD_FLIGHT = {"id": "F1", "airline": "Lufthansa", "airline_iata": "LH",
                "terminal": "3", "aircraft": "Airbus A320", "status": "Expected",
                "rebooking": "See your Contract of Carriage.", "notes": "Nonstop."}
 GOOD_HOTEL = {"id": "H1", "name": "Airport Plaza", "distance_km": 2.4, "city": "Lod",
-              "area": "2.4 km from the terminal, Lod",
               "check_in": "2026-08-10", "check_out": "2026-08-11", "nights": 1,
               "price_estimate": "Roughly EUR 120 (estimate)", "meals": "unknown",
               "notes": "Meals not confirmed - check at the desk."}

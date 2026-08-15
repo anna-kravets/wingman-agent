@@ -38,6 +38,16 @@ FAILURE_MESSAGES = {
 # (`docs/PROJECT_PLAN.md` §7). Six turns is three exchanges of context.
 HISTORY_TURNS = 6
 
+# Three each is what the agents already return at most, and the digest is re-sent to the
+# composing call on every turn — this is the cap that keeps that honest.
+MAX_DIGEST_OPTIONS = 3
+
+MEALS_TEXT = {
+    "included": "meals included",
+    "not_included": "no meals",
+    "unknown": "meals not confirmed",
+}
+
 REQUIRED_FIELDS = ("flight_number", "origin", "destination", "disruption", "stranded_at")
 
 # Generous on purpose: airlines cancel a fortnight ahead, and flagging that would bounce
@@ -351,59 +361,114 @@ def _extract_request(prompt: str, history: list[dict], local_now: str) -> tuple[
     return _request_from(parsed, bool(history), local_now), step
 
 
-def _line(label: str, *parts: str) -> str:
-    """One digest line, built only from the fields that actually came back."""
-    return f"{label}: " + ", ".join(part for part in parts if part) + "."
+def _options(payload: dict | None) -> list[dict]:
+    """Every option a payload holds, recommended first, capped."""
+    if not payload:
+        return []
+    options = [o for o in (payload.get("options") or []) if isinstance(o, dict)]
+    wanted = payload.get("recommended_id")
+    options.sort(key=lambda o: o.get("id") != wanted)
+    return options[:MAX_DIGEST_OPTIONS]
+
+
+def _flight_line(option: dict) -> str:
+    """One flight, built only from the fields that actually came back.
+
+    Nothing is indexed with []: the agent's validation guarantees an id and a real
+    candidate behind it, not that every optional field survived.
+    """
+    parts = [
+        " ".join(p for p in (option.get("flight_number"), option.get("airline")) if p),
+        " to ".join(p for p in (option.get("origin"), option.get("destination")) if p),
+        f"departs {option['depart']}" if option.get("depart") else "",
+        f"terminal {option['terminal']}" if option.get("terminal") else "",
+        f"arrives {option['arrive']}" if option.get("arrive") else "",
+        f"{option['duration_minutes']} minutes in the air" if option.get("duration_minutes") else "",
+        "arrives the day after it leaves" if option.get("arrives_next_day") else "",
+        option.get("aircraft") or "",
+        f"status {option['status']}" if option.get("status") else "",
+    ]
+    return ", ".join(p for p in parts if p) + "."
+
+
+def _stay_line(option: dict) -> str:
+    """One stay. `distance_km` and `meals` replace the two fields Task 6 deleted."""
+    distance = option.get("distance_km")
+    parts = [
+        option.get("name") or "",
+        f"a {option['kind']}" if option.get("kind") else "",
+        f"{distance} km from the terminal" if distance is not None else "",
+        option.get("city") or "",
+        option.get("address") or "",
+        f"phone {option['phone']}" if option.get("phone") else "",
+        option.get("website") or "",
+        f"{option['stars']} stars" if option.get("stars") else "",
+        f"step-free access: {option['wheelchair']}" if option.get("wheelchair") else "",
+        " to ".join(p for p in (option.get("check_in"), option.get("check_out")) if p),
+        f"{option['nights']} night(s)" if option.get("nights") else "",
+        MEALS_TEXT.get(option.get("meals"), MEALS_TEXT["unknown"]),
+        option.get("price_estimate") or "",
+    ]
+    return ", ".join(p for p in parts if p) + "."
 
 
 def _digest(results: dict, failures: list[str]) -> str:
-    """What the crew came back with, as flat lines.
+    """What was found, as flat lines.
 
-    Both the composing call's input and — if that call is the one that fails — the
-    plan the passenger gets instead. Nothing here is indexed with []: the agents'
-    validation guarantees an id and a parseable date, not a label, and a model that
-    left "area" out must not cost the passenger a plan that six calls already paid for.
+    Both the composing call's input and — if that call is the one that fails — the plan
+    the passenger gets instead, so the headings stay plain English. Nothing is indexed
+    with []: a model that left a field out must not cost the passenger a plan that six
+    calls already paid for.
     """
-    lines = []
+    lines: list[str] = []
 
-    flight = _recommended(results.get("flight") or {})
-    if flight:
-        lines.append(_line(
-            "Onward flight",
-            f"{flight.get('airline') or ''} {flight.get('flight_number') or ''}".strip(),
-            " to ".join(p for p in (flight.get("origin"), flight.get("destination")) if p),
-            f"departs {flight['depart']}" if flight.get("depart") else "",
-        ))
+    onward = _options(results.get("flight"))
+    if onward:
+        lines.append("ONWARD FLIGHT")
+        lines.append(f"  Recommended: {_flight_line(onward[0])}")
+        for extra in ("rebooking", "notes"):
+            if onward[0].get(extra):
+                lines.append(f"    {onward[0][extra]}")
+        if len(onward) > 1:
+            lines.append("  Also available:")
+            lines += [f"    {_flight_line(o)}" for o in onward[1:]]
+        lines.append("")
 
-    stay = _recommended(results.get("stay") or {})
-    if stay:
-        lines.append(_line(
-            "Somewhere to sleep",
-            stay.get("name") or "",
-            stay.get("area") or "",
-            " to ".join(p for p in (stay.get("check_in"), stay.get("check_out")) if p),
-            f"{stay['nights']} night(s)" if stay.get("nights") else "",
-            "meals included" if stay.get("meals_included") else "no meals",
-        ))
+    stays = _options(results.get("stay"))
+    if stays:
+        lines.append("SOMEWHERE TO SLEEP")
+        lines.append(f"  Recommended: {_stay_line(stays[0])}")
+        if stays[0].get("notes"):
+            lines.append(f"    {stays[0]['notes']}")
+        if len(stays) > 1:
+            lines.append("  Also available:")
+            lines += [f"    {_stay_line(o)}" for o in stays[1:]]
+        lines.append("")
 
     rights = results.get("rights")
     if rights:
-        lines.append(f"What you are owed (under {rights.get('regulation')}):")
+        lines.append(f"WHAT YOU ARE OWED (under {rights.get('regulation')})")
         for item in rights.get("entitlements") or []:
-            source = item.get("source")
+            source, confidence = item.get("source"), item.get("confidence")
             lines.append(
                 f"  - {item.get('kind')}: {item.get('summary')}"
                 + (f" [{source}]" if source else "")
+                + (f" ({confidence} confidence)" if confidence else "")
             )
         for action in rights.get("next_actions") or []:
             lines.append(f"  Next: {action}")
+        # These carry no NOTE:/ASK:/CONFIRM: prefix and are not that protocol — they are
+        # gaps in the evidence the reflection loop found, and belong in their own block.
+        for caveat in rights.get("caveats") or []:
+            lines.append(f"  Not established from the sources: {caveat}")
+        lines.append("")
 
-    for failure in failures:
-        lines.append(failure)
+    if failures:
+        lines.append("COULD NOT COMPLETE")
+        lines += [f"  - {failure}" for failure in failures]
+        lines.append("")
 
-    lines.append("")
     lines.append("Ask me to compare any of these, or about the terms of one in particular.")
-
     return "\n".join(lines)
 
 

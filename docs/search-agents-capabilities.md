@@ -90,8 +90,8 @@ The model also emits about five fields per option instead of twelve, which is re
 "leaves in 40 minutes", "no phone number anywhere". Section 2a is why: a model that notices
 something in one run of two is not a safety net.
 
-Two deprecated fields (`area`, `meals_included`) carry the old shape until Person A's `_digest`
-rewrite lands, so there is no window in which the passenger sees less than before.
+The two deprecated fields (`area`, `meals_included`) were deleted 15/8/2026, once `_digest`
+migrated to `distance_km`/`city` and `meals`.
 
 > **Not live-verified yet.** Everything in §1 was measured against a real model; this refinement
 > was not. It is covered by 224 unit tests, including `facts_from_candidates` against synthetic

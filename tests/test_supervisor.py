@@ -67,7 +67,7 @@ def test_complete_message_dispatches_the_crew():
     assert set(modules_of(steps)) == MODULES
     assert modules_of(steps)[0] == "Supervisor"    # refinement first
     assert modules_of(steps)[-1] == "Supervisor"   # compose last
-    assert "Onward flight" in text
+    assert "ONWARD FLIGHT" in text
 
 
 def test_every_step_module_is_on_the_architecture_diagram():
@@ -201,7 +201,8 @@ def test_one_agent_failing_does_not_lose_the_rest_of_the_plan(monkeypatch):
     monkeypatch.setattr(documentation_agent, "run", explode)
     text, steps = supervisor.run(COMPLETE, [])
 
-    assert "Onward flight" in text or "ONWARD FLIGHT" in text
+    assert "ONWARD FLIGHT" in text
+    assert "SOMEWHERE TO SLEEP" in text
     assert supervisor.FAILURE_MESSAGES["rights"] in text
     # The cause is for us, not for a passenger standing at a gate.
     assert "Pinecone" not in text
@@ -288,8 +289,8 @@ def test_a_failed_composing_call_still_hands_over_the_plan(monkeypatch):
     text, steps = supervisor.run(COMPLETE, [])
 
     # Six calls and two external quotas are already spent by the time we compose.
-    assert "Onward flight" in text
-    assert "Somewhere to sleep" in text
+    assert "ONWARD FLIGHT" in text
+    assert "SOMEWHERE TO SLEEP" in text
     assert failed_step in steps          # and the call that failed is still in the trace
 
 
@@ -303,7 +304,7 @@ def test_a_half_labelled_option_still_produces_a_plan(monkeypatch):
 
     text, _ = supervisor.run(COMPLETE, [])
 
-    assert "Onward flight" in text or "ONWARD FLIGHT" in text
+    assert "ONWARD FLIGHT" in text
     assert supervisor.FAILURE_MESSAGES["flight"] not in text
 
 
@@ -317,6 +318,79 @@ def test_a_failing_flight_search_skips_the_stay_rather_than_guessing_nights(monk
     assert "AccommodationAgent" not in modules_of(steps)
     assert supervisor.FAILURE_MESSAGES["flight"] in text
     assert "DocumentationAgent" in modules_of(steps)  # rights are independent
+
+
+# --- the digest -------------------------------------------------------------
+
+
+def digest_of(text_and_steps):
+    return text_and_steps[0]
+
+
+def test_every_option_reaches_the_plan_not_just_the_recommended_one():
+    text, _ = supervisor.run(COMPLETE, [])
+
+    # agent_info promises the passenger can compare. The composing call has to see
+    # more than one option for that sentence to be true.
+    assert "LH 687" in text
+    assert "LY 357" in text
+
+
+def test_the_recommended_option_comes_first():
+    text, _ = supervisor.run(COMPLETE, [])
+
+    assert text.index("LH 687") < text.index("LY 357")
+
+
+def test_the_new_flight_facts_reach_the_plan():
+    text, _ = supervisor.run(COMPLETE, [])
+
+    assert "terminal 3" in text
+    assert "Airbus A320" in text
+    assert "Expected" in text
+
+
+def test_the_hotels_phone_number_reaches_the_plan():
+    text, _ = supervisor.run(COMPLETE, [])
+
+    # The one job neither agent can do: confirming a room and a rate.
+    assert "+972 3 000 0000" in text
+
+
+def test_the_distance_reaches_the_plan_from_distance_km():
+    text, _ = supervisor.run(COMPLETE, [])
+
+    assert "2.4 km from the terminal" in text
+
+
+def test_unknown_meals_are_not_asserted_as_absent():
+    text, _ = supervisor.run(COMPLETE, [])
+
+    # `meals_included: false` was a lie dressed as data - we almost never know.
+    assert "meals not confirmed" in text
+    assert "no meals" not in text
+
+
+def test_the_deprecated_fields_are_read_nowhere():
+    import inspect
+
+    source = inspect.getsource(supervisor)
+    assert "meals_included" not in source
+    assert '"area"' not in source and "'area'" not in source
+
+
+def test_the_options_shown_are_capped():
+    payload = {"options": [{"id": f"F{n}"} for n in range(9)], "recommended_id": "F4"}
+
+    shown = supervisor._options(payload)
+
+    assert len(shown) == supervisor.MAX_DIGEST_OPTIONS
+    assert shown[0]["id"] == "F4"
+
+
+def test_no_payload_yields_no_options():
+    assert supervisor._options(None) == []
+    assert supervisor._options({"options": []}) == []
 
 
 # --- the clock --------------------------------------------------------------

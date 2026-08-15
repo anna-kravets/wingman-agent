@@ -78,14 +78,6 @@ def test_facts_come_from_the_candidate(monkeypatch):
     assert option["city"] == "Lod"
 
 
-def test_the_deprecated_area_still_carries_the_distance(monkeypatch):
-    option = run_with(monkeypatch, [CANDIDATE], good_payload())[0]["options"][0]
-
-    # supervisor._digest reads `area`, and would otherwise lose the distance
-    # entirely until Person A migrates to distance_km + city (spec P7).
-    assert option["area"] == "2.4 km from the terminal, Lod"
-
-
 def test_the_stay_window_is_written_not_asked_for(monkeypatch):
     option = run_with(monkeypatch, [CANDIDATE], good_payload())[0]["options"][0]
 
@@ -126,7 +118,6 @@ def test_meals_is_unknown_unless_the_data_says_otherwise(monkeypatch):
 
     # "meals_included: false" was a lie dressed as data - we almost never know.
     assert option["meals"] == "unknown"
-    assert option["meals_included"] is False      # deprecated, for _digest (P7)
 
 
 def test_meals_follows_the_breakfast_tag(monkeypatch):
@@ -134,7 +125,6 @@ def test_meals_follows_the_breakfast_tag(monkeypatch):
         option = run_with(monkeypatch, [dict(CANDIDATE, breakfast=tag)],
                           good_payload())[0]["options"][0]
         assert option["meals"] == expected
-        assert option["meals_included"] is (expected == "included")
 
 
 def test_kind_appears_only_when_it_is_not_a_hotel(monkeypatch):

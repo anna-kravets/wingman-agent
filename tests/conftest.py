@@ -18,15 +18,18 @@ from lib.tools import flights, hotels
 def _flight_response(user_prompt: str) -> dict:
     """Only the model's half: the agent fills the facts from the candidate.
 
-    The flight number must match fake_search_data's candidate, which is why this
+    The flight numbers must match fake_search_data's candidates, which is why this
     fake got shorter rather than longer when the payload grew.
     """
     return {
-        "options": [{
-            "id": "F1", "flight_number": "LH 687",
-            "rebooking": "Rebooking terms come from your Contract of Carriage.",
-            "notes": "Earliest nonstop.",
-        }],
+        "options": [
+            {"id": "F1", "flight_number": "LH 687",
+             "rebooking": "Rebooking terms come from your Contract of Carriage.",
+             "notes": "Earliest nonstop."},
+            {"id": "F2", "flight_number": "LY 357",
+             "rebooking": "A different airline from the one that cancelled.",
+             "notes": "Leaves earlier, lands earlier."},
+        ],
         "recommended_id": "F1",
         "caveats": [],
     }
@@ -152,8 +155,15 @@ def fake_search_data(monkeypatch):
         "depart": depart.isoformat(),
         "arrive": (depart + timedelta(hours=3, minutes=25)).isoformat(),
         "status": "Expected", "aircraft": "Airbus A320", "terminal": "3",
+    }, {
+        "flight": "LY 357", "airline": "El Al", "airline_iata": "LY",
+        "origin": "TLV", "destination": "FRA",
+        "depart": (depart - timedelta(hours=3)).isoformat(),
+        "arrive": (depart + timedelta(minutes=25)).isoformat(),
+        "status": "Expected", "aircraft": "Boeing 737-900", "terminal": "3",
     }])
     monkeypatch.setattr(hotels, "search", lambda *a, **k: [{
         "name": "Airport Plaza", "distance_km": 2.4, "stars": "4",
-        "breakfast": None, "area": "Lod",
+        "breakfast": None, "area": "Lod", "phone": "+972 3 000 0000",
+        "address": "12 HaNasi", "wheelchair": "yes",
     }])

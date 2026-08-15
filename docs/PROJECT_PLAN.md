@@ -124,10 +124,6 @@ consuming these in `supervisor._digest`:
   real rate.
 - **Widened:** `meals_included: bool` → `meals: "included" | "not_included" | "unknown"`.
   `unknown` is the honest answer nearly every time; `false` was a lie dressed as data.
-- **Two deprecated fields remain so nothing regresses before your rewrite lands:** `area` still
-  carries the human phrasing (`"2.4 km from the terminal, Lod"`) that `_digest` reads today, and
-  `meals_included` still exists as a boolean. **Delete both once `_digest` reads `distance_km`,
-  `city` and `meals`.**
 - **Optional fields are omitted, not null.** Read with `.get()`; absence means OpenStreetMap or
   AeroDataBox did not know, which is worth saying rather than hiding.
 - **Every option is now worth forwarding.** `_digest` currently keeps only the recommended one,

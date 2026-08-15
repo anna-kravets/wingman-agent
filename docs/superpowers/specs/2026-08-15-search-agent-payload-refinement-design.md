@@ -159,6 +159,5 @@ landed, and until then the passenger saw *less* — specifically the hotel's dis
 digest reads out of `area`. The compatibility fields close that window: there is now no point at
 which the output degrades, and her migration can happen whenever suits her.
 
-What remains is bookkeeping: `area` and `meals_included` are marked deprecated in the code and in
-the §1 contract, and should be deleted once her digest reads `distance_km`, `city` and `meals`. If
-they are still there at submission they are harmless — redundant, not wrong.
+**Bookkeeping done.** `area` and `meals_included` were deleted 15/8/2026, once `_digest` (Task 6)
+migrated to reading `distance_km`, `city` and `meals`.
