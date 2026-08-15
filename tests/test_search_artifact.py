@@ -197,9 +197,22 @@ def test_deferral_passes_when_it_points_at_the_contract():
 
 
 def test_degraded_refusal_passes_when_the_agent_did_not_run_and_the_passenger_was_told():
-    # No FlightAgent step at all: it refused before spending a call.
+    # No FlightAgent step at all: it refused before spending a call. This is the wording
+    # flight_agent.NO_LIVE_DATA produces (route_problem's own sentence differs but both
+    # end up in the composed response as prose, which is all this check can see).
     art = {"status": "ok",
-           "response": "Could not complete: onward flights (live schedules unavailable)",
+           "response": ("Live flight schedules were not available for this route, so no "
+                        "departure could be verified."),
+           "steps": [step("Supervisor", "refine", {}), step("Supervisor", "compose", {})]}
+    assert status_of(evaluate(art, case_with("degraded_refusal")), "degraded_refusal") == "pass"
+
+
+def test_degraded_refusal_passes_on_the_internal_failure_fallback_wording():
+    # The other path to a no-call refusal: dispatch fell back to FAILURE_MESSAGES["flight"]
+    # because the failure carried no passenger_message. Pinned separately so a rewording of
+    # either sentence, alone, cannot silently break the eval again.
+    art = {"status": "ok",
+           "response": "I could not get onward flight options just now.",
            "steps": [step("Supervisor", "refine", {}), step("Supervisor", "compose", {})]}
     assert status_of(evaluate(art, case_with("degraded_refusal")), "degraded_refusal") == "pass"
 

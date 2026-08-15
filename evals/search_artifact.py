@@ -244,7 +244,8 @@ def _check_degraded_refusal(artifact, case):
     if step:
         return _result("degraded_refusal", False,
                        "the model was called with no verified candidates to choose from")
-    told = "onward flights" in str(artifact.get("response", "")).lower()
+    response = str(artifact.get("response", "")).lower()
+    told = "onward flight" in response or "schedules were not available" in response
     return _result("degraded_refusal", told,
                    "refused, and the passenger was told why" if told
                    else "refused silently - the passenger was never told")
