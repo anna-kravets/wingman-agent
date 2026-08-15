@@ -137,7 +137,16 @@ therefore no `caveats`: the reason travels as the `LLMError` message, as it does
 - **`docs/PROJECT_PLAN.md` §1** holds these schemas and is a **locked** decision. It is updated in
   the same commit, per `CLAUDE.md` §7, with the changes called out for Person A.
 - **Evaluator checks** that read moving fields are updated with the schema: `meals_honesty`
-  (`meals_included` → `meals`), `date_sync`, `grounding_flights`, `grounding_hotels`.
+  (`meals_included` → `meals`), `no_asserted_fare` (`fare_conditions` → `rebooking`), `date_sync`,
+  `grounding_flights`, `grounding_hotels`.
+- **`tests/conftest.py`'s `fake_llm` returns the old shape** and must move with it. That file is
+  shared: Person A's Supervisor tests run against the same fakes, so this edit lands in her
+  territory and belongs in the handover conversation, not just the PR.
+  One convenient interaction: because P1 overwrites factual fields from the candidate, the fake's
+  flight number only has to *match* `fake_search_data`'s candidate — it already does — so the fakes
+  get simpler rather than more elaborate.
+- **The GUI is unaffected.** Verified 15/8/2026: `public/index.html` never names a payload field and
+  renders each step with `JSON.stringify(step.response)`, so renames pass straight through it.
 - **A live re-run** proves it end to end: ~15–20 LLM calls, ~20 API units.
 
 ---
