@@ -48,6 +48,16 @@ MEALS_TEXT = {
     "unknown": "meals not confirmed",
 }
 
+# The search agents' caveat protocol (payload spec P4). Ordered: what stops the passenger
+# acting comes before what is asked of them, which comes before what is merely worth
+# knowing. They are written for whoever is coordinating the plan, so they are translated
+# here rather than printed.
+CAVEAT_BLOCKS = (
+    ("CONFIRM:", "BEFORE YOU ACT ON THIS"),
+    ("ASK:", "THINGS I NEED FROM YOU"),
+    ("NOTE:", "WORTH KNOWING"),
+)
+
 REQUIRED_FIELDS = ("flight_number", "origin", "destination", "disruption", "stranded_at")
 
 # Generous on purpose: airlines cancel a fortnight ahead, and flagging that would bounce
@@ -143,6 +153,9 @@ they are owed and what to do about it - that is the order they need it in.
 
 State amounts and entitlements only where the findings support them, and say which document each came
 from. Where something could not be finished, say plainly what is missing rather than papering over it.
+
+Anything under "Before you act on this" goes ahead of your recommendation, not after it. If there is
+a "Things I need from you" block, close on it as a direct question instead of the general invitation.
 
 State any assumption you are given, in your own words, so the passenger can correct it.
 
@@ -412,6 +425,25 @@ def _stay_line(option: dict) -> str:
     return ", ".join(p for p in parts if p) + "."
 
 
+def _split_caveats(results: dict) -> dict[str, list[str]]:
+    """Search-agent caveats, routed by prefix and stripped of it.
+
+    An unprefixed one is a note: the model may add its own and the prefix is only asked
+    for, while the ones that matter are generated in code and always carry it.
+    """
+    routed = {prefix: [] for prefix, _ in CAVEAT_BLOCKS}
+    for key in ("flight", "stay"):
+        for caveat in (results.get(key) or {}).get("caveats") or []:
+            text = str(caveat).strip()
+            prefix = next(
+                (p for p, _ in CAVEAT_BLOCKS if text.upper().startswith(p)), None
+            )
+            body = text[len(prefix):].strip() if prefix else text
+            if body:
+                routed[prefix or "NOTE:"].append(body)
+    return routed
+
+
 def _digest(results: dict, failures: list[str]) -> str:
     """What was found, as flat lines.
 
@@ -462,6 +494,13 @@ def _digest(results: dict, failures: list[str]) -> str:
         for caveat in rights.get("caveats") or []:
             lines.append(f"  Not established from the sources: {caveat}")
         lines.append("")
+
+    routed = _split_caveats(results)
+    for prefix, heading in CAVEAT_BLOCKS:
+        if routed[prefix]:
+            lines.append(heading)
+            lines += [f"  - {item}" for item in routed[prefix]]
+            lines.append("")
 
     if failures:
         lines.append("COULD NOT COMPLETE")

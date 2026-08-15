@@ -600,5 +600,60 @@ def test_the_composing_prompt_says_who_it_is():
     assert "Wingman" in compose["system_prompt"]
 
 
+# --- caveats ---
+
+
+CAVEATED = {
+    "flight": {"options": [{"id": "F1"}], "recommended_id": "F1", "caveats": [
+        "CONFIRM: LH 687 leaves in about 40 minutes - check they can reach the gate.",
+        "NOTE: every option is on a different airline.",
+    ]},
+    "stay": {"options": [{"id": "H1"}], "recommended_id": "H1", "caveats": [
+        "ASK: none of these has a phone number listed.",
+        "every price here is an estimate.",
+    ]},
+}
+
+
+def test_caveats_are_routed_to_their_own_blocks():
+    text = supervisor._digest(CAVEATED, [])
+
+    assert "BEFORE YOU ACT ON THIS" in text
+    assert "THINGS I NEED FROM YOU" in text
+    assert "WORTH KNOWING" in text
+
+
+def test_the_prefix_is_stripped_before_the_passenger_sees_it():
+    text = supervisor._digest(CAVEATED, [])
+
+    assert "CONFIRM:" not in text
+    assert "ASK:" not in text
+    assert "NOTE:" not in text
+    assert "LH 687 leaves in about 40 minutes" in text
+
+
+def test_an_unprefixed_caveat_is_treated_as_a_note():
+    routed = supervisor._split_caveats(CAVEATED)
+
+    assert "every price here is an estimate." in routed["NOTE:"]
+
+
+def test_the_rights_caveats_are_not_routed_as_the_search_protocol():
+    results = {"rights": {"regulation": "EU 261/2004", "entitlements": [],
+                          "next_actions": [], "caveats": ["No evidence on meals was retrieved."]}}
+    text = supervisor._digest(results, [])
+
+    # Same field name, different meaning: evidence gaps, not the NOTE:/ASK:/CONFIRM: protocol.
+    assert "Not established from the sources: No evidence on meals was retrieved." in text
+    assert "WORTH KNOWING" not in text
+
+
+def test_no_caveats_means_no_empty_headings():
+    text = supervisor._digest({"flight": {"options": [{"id": "F1"}], "recommended_id": "F1"}}, [])
+
+    assert "BEFORE YOU ACT ON THIS" not in text
+    assert "WORTH KNOWING" not in text
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))
