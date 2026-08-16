@@ -238,6 +238,21 @@ def _history_block(history: list[dict]) -> list[str]:
     return lines
 
 
+def _prior_results(history: list[dict]) -> dict:
+    """Every agent payload from earlier turns, merged, most recent turn winning.
+
+    The same merge `_prior_results_block` and `_prior_options_digest` each do inline;
+    this is the one the dispatch path needs, so a narrowed follow-up can reuse a
+    flight already found instead of the stay being silently skipped.
+    """
+    prior: dict = {}
+    for turn in history:                       # oldest first, so later turns win per key
+        found = turn.get("results") if isinstance(turn, dict) else None
+        if isinstance(found, dict):
+            prior.update(found)
+    return prior
+
+
 def _prior_results_block(history: list[dict]) -> list[str]:
     """The options already on the table, identities only.
 
@@ -710,8 +725,14 @@ def run(prompt: str, history: list[dict], *,
         dispatch("flight", flight_agent.run, request)
 
     # Date sync: the stay follows the flight that was actually found, never a guess.
+    # A stay-only follow-up ("where can I sleep?") narrows `needs` and so never
+    # re-dispatches FlightAgent, leaving `results` empty this turn. Falling back to
+    # the flight found earlier is what stops the passenger asking about a bed and
+    # getting silence — and it is free, the flight was already paid for.
     if "stay" in needs:
-        stay_window = _stay_window(request, results.get("flight"))
+        stay_window = _stay_window(
+            request, results.get("flight") or _prior_results(history).get("flight")
+        )
         if stay_window:
             dispatch("stay", accommodation_agent.run, request, stay_window)
 

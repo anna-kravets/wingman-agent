@@ -884,3 +884,47 @@ def test_the_composing_prompt_tells_the_model_to_stay_on_topic_and_compare_in_de
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))
+
+
+def test_a_stay_only_follow_up_still_reaches_the_accommodation_agent():
+    """A hotel question must produce hotel options, not silence.
+
+    `stay` is the only need that depends on another: the nights come from the flight.
+    A narrowed follow-up does not re-dispatch FlightAgent, so `results["flight"]` is
+    empty this turn and the date sync had nothing to work from — AccommodationAgent
+    was skipped on the exact turn the passenger asked about a bed, and not even
+    recorded as a failure. The flight was already found and paid for in turn 1.
+    """
+    depart = (datetime.now() + timedelta(days=1)).replace(
+        hour=9, minute=40, second=0, microsecond=0)
+    history = [{
+        "prompt": COMPLETE,
+        "response": "Onward flight: LH 687.",
+        "results": {"flight": {
+            "options": [{"id": "F1", "flight_number": "LH 687",
+                         "depart": depart.isoformat()}],
+            "recommended_id": "F1"}},
+    }]
+
+    _, steps, _ = supervisor.run("where can I sleep tonight?", history)
+
+    assert "AccommodationAgent" in modules_of(steps)
+
+
+def test_a_stay_only_follow_up_uses_the_nights_the_earlier_flight_implies():
+    depart = (datetime.now() + timedelta(days=2)).replace(
+        hour=6, minute=0, second=0, microsecond=0)
+    history = [{
+        "prompt": COMPLETE,
+        "response": "Onward flight: LH 687.",
+        "results": {"flight": {
+            "options": [{"id": "F1", "flight_number": "LH 687",
+                         "depart": depart.isoformat()}],
+            "recommended_id": "F1"}},
+    }]
+
+    _, steps, _ = supervisor.run("where can I sleep tonight?", history)
+    stay = next(s for s in steps if s["module"] == "AccommodationAgent")
+
+    # Two nights, derived from the flight found in turn 1 rather than guessed.
+    assert "Nights: 2" in stay["prompt"]["user_prompt"]
