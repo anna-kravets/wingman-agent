@@ -928,3 +928,72 @@ def test_a_stay_only_follow_up_uses_the_nights_the_earlier_flight_implies():
 
     # Two nights, derived from the flight found in turn 1 rather than guessed.
     assert "Nights: 2" in stay["prompt"]["user_prompt"]
+
+
+# --- an explicit request outranks our inference ----------------------------------
+
+
+def _refined(needs, **fields):
+    return supervisor._request_from(
+        dict(fields, needs=needs), follow_up=True,
+        local_now=datetime.now().isoformat(timespec="seconds"))
+
+
+def test_a_stay_only_request_blocks_only_on_where_the_passenger_is():
+    """AccommodationAgent reads exactly one field from the request: stranded_at.
+
+    The gate applied one flat REQUIRED_FIELDS list whatever was asked for, so a live
+    follow-up asking "find us a hotel near TLV" - with needs=['stay'] and stranded_at
+    already known - was still interrogated for a flight number, a route and a
+    disruption type that no hotel search ever reads.
+    """
+    assert _refined(["stay"], stranded_at="TLV")["missing"] == []
+
+
+def test_a_stay_only_request_still_needs_to_know_the_airport():
+    assert _refined(["stay"])["missing"] == ["stranded_at"]
+
+
+def test_a_flight_request_still_blocks_on_everything_it_searches_with():
+    missing = _refined(["flight"], stranded_at="TLV")["missing"]
+
+    assert "origin" in missing and "destination" in missing
+
+
+def test_asking_for_a_stay_and_a_flight_blocks_on_both_sets():
+    missing = _refined(["flight", "stay"], stranded_at="TLV")["missing"]
+
+    assert "origin" in missing
+
+
+def test_an_explicit_hotel_request_is_searched_even_when_the_flight_leaves_today():
+    """A passenger who asks for a bed gets one looked for.
+
+    The date sync decides the nights of the *default plan*. It was also deciding
+    whether to search at all, so someone who asked outright for a hotel got advice
+    to go ask the airline desk and no hotel names at any point.
+    """
+    today = datetime.now().replace(hour=17, minute=0, second=0, microsecond=0)
+    history = [{
+        "prompt": COMPLETE,
+        "response": "Onward flight: LY 223 today.",
+        "results": {"flight": {
+            "options": [{"id": "F1", "flight_number": "LY 223",
+                         "depart": today.isoformat()}],
+            "recommended_id": "F1"}},
+    }]
+
+    _, steps, _ = supervisor.run("find us a hotel near the airport for tonight", history)
+    stay = next(s for s in steps if s["module"] == "AccommodationAgent")
+
+    # Tonight until tomorrow: the honest default when no later flight sets the nights.
+    assert f"Check in: {date.today().isoformat()}" in stay["prompt"]["user_prompt"]
+    assert "Nights: 1" in stay["prompt"]["user_prompt"]
+
+
+def test_the_gate_still_asks_when_a_flight_search_is_wanted():
+    # Narrowing the gate must not stop it protecting the searches that do need details.
+    text, steps, _ = supervisor.run("my flight got cancelled, when is the next one?", [])
+
+    assert "I need a couple of details" in text
+    assert modules_of(steps) == ["Supervisor"]

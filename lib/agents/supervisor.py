@@ -16,7 +16,7 @@ line of conversation.
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from lib import llm
 from lib.agents import accommodation_agent, documentation_agent, flight_agent
@@ -59,6 +59,12 @@ CAVEAT_BLOCKS = (
 )
 
 REQUIRED_FIELDS = ("flight_number", "origin", "destination", "disruption", "stranded_at")
+
+# What each need actually blocks on. AccommodationAgent reads exactly one field from
+# the request - stranded_at - so "find us a hotel near TLV" was being interrogated for
+# a flight number, a route and a disruption type that no hotel search ever touches.
+# Anything not listed here keeps the full set.
+REQUIRED_BY_NEED = {"stay": ("stranded_at",)}
 
 # Generous on purpose: airlines cancel a fortnight ahead, and flagging that would bounce
 # a real passenger. It still catches "today, 11th of November" read in August.
@@ -225,6 +231,26 @@ def _stay_window(request: dict, flight_payload: dict | None) -> dict | None:
         "nights": (depart.date() - now.date()).days,
         "guests": request.get("party_size"),
         "departs": option["depart"],
+    }
+
+
+def _tonight_window(request: dict, flight_payload: dict | None) -> dict:
+    """Tonight until tomorrow — for a passenger who asked for a bed outright.
+
+    `_stay_window` decides the nights of the *default plan*, and returns None when the
+    onward flight leaves today. It was also deciding whether to search at all, so
+    someone who asked in so many words for a hotel got told to go ask the airline desk
+    and never saw a single property. An explicit request outranks our inference; the
+    plan can still say their flight leaves today and they may not need the room.
+    """
+    now = datetime.fromisoformat(request["local_now"])
+    option = _recommended(flight_payload or {}) or {}
+    return {
+        "check_in": now.date().isoformat(),
+        "check_out": (now.date() + timedelta(days=1)).isoformat(),
+        "nights": 1,
+        "guests": request.get("party_size"),
+        "departs": option.get("depart"),
     }
 
 
@@ -461,7 +487,12 @@ def _request_from(parsed: dict, follow_up: bool, local_now: str) -> dict:
             note += " Working without it."
         request["assumptions"].append(note)
 
-    request["missing"] = [f for f in REQUIRED_FIELDS if not request.get(f)]
+    wanted: set[str] = set()
+    for need in request["needs"]:
+        wanted.update(REQUIRED_BY_NEED.get(need, REQUIRED_FIELDS))
+    # Nothing dispatched blocks on nothing; the follow-up path relies on that.
+    request["missing"] = [f for f in REQUIRED_FIELDS
+                          if f in wanted and not request.get(f)]
     return request
 
 
@@ -730,9 +761,13 @@ def run(prompt: str, history: list[dict], *,
     # the flight found earlier is what stops the passenger asking about a bed and
     # getting silence — and it is free, the flight was already paid for.
     if "stay" in needs:
-        stay_window = _stay_window(
-            request, results.get("flight") or _prior_results(history).get("flight")
-        )
+        known_flight = results.get("flight") or _prior_results(history).get("flight")
+        stay_window = _stay_window(request, known_flight)
+        # `needs == ["stay"]` means the narrowing decided this message was *about* a
+        # bed. Then the passenger asked, and being asked outranks our own inference
+        # that a same-day flight makes a room unnecessary.
+        if not stay_window and needs == ["stay"]:
+            stay_window = _tonight_window(request, known_flight)
         if stay_window:
             dispatch("stay", accommodation_agent.run, request, stay_window)
 
