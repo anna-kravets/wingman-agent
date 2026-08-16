@@ -342,6 +342,29 @@ def test_agent_info_has_the_required_fields():
         # any written description. This is the description.
         assert module in body["description"]
 
+    assert len(body["prompt_examples"]) == 1
+    example = body["prompt_examples"][0]
+    assert set(example) == {"prompt", "full_response", "steps"}
+    assert example["prompt"].startswith("Lufthansa flight LH318")
+    assert "ONWARD FLIGHT" in example["full_response"]
+    assert "CHECKED BAGS" in example["full_response"]
+    assert len(example["steps"]) == 8
+    assert [step["module"] for step in example["steps"]] == [
+        "Supervisor",
+        "FlightAgent",
+        "AccommodationAgent",
+        "DocumentationAgent",
+        "DocumentationAgent",
+        "DocumentationAgent",
+        "Supervisor",
+        "Supervisor",
+    ]
+    for step in example["steps"]:
+        assert set(step) == {"module", "prompt", "response"}
+        assert set(step["prompt"]) == {"system_prompt", "user_prompt"}
+        assert step["prompt"]["system_prompt"]
+        assert step["prompt"]["user_prompt"]
+
 
 def test_model_architecture_returns_a_png():
     response = client.get("/api/model_architecture")

@@ -214,8 +214,8 @@ is what keeps the suite keyless and free.
 ### Phase 3 — Integration (day 10–13)
 - [x] Supervisor calls all 3 sub-agents, aggregates response, produces full end-to-end `steps` trace — covered by `tests/` and verified live on 14/8/2026: a first turn ran `Supervisor · FlightAgent · DocumentationAgent ×3 · Supervisor` in ~50s, and a flight follow-up on the same conversation ran `Supervisor · FlightAgent · Supervisor`.
 - [x] **LLMod.ai endpoint verified with live tests.** Chat and embedding requests use direct `httpx` clients configured only through `LLMOD_API_KEY` and `LLMOD_API_BASE`.
-- [~] `GET /api/agent_info` — route live; `description`, `purpose` and `prompt_template` written (they describe the product, not the code). **Still blocked:**
-  - [ ] `prompt_examples[]` — currently `[]`. `full_response` and `steps` must be captured verbatim from a real `/api/execute` run: `steps` has to match the actual LLM calls and the module names in the architecture PNG, and a grader can diff them against a live run. Fill in as the last integration step.
+- [~] `GET /api/agent_info` — route live; `description`, `purpose` and `prompt_template` written (they describe the product, not the code).
+  - [x] `prompt_examples[]` — populated from the successful 16/8/2026 LH318 run with its complete final response and all eight real LLM steps (`Supervisor · FlightAgent · AccommodationAgent · DocumentationAgent ×3 · Supervisor ×2`).
   - [ ] Revisit the `description` now the data source is decided (§6). It says Wingman *proposes* options and books nothing, which is still true. It must additionally state that **flight schedules and hotels are real, while prices and fare conditions are estimates** — no free source of fares or seat availability exists.
 - [x] `GET /api/model_architecture` — PNG served with `Content-Type: image/png`, `includeFiles` set in `vercel.json` so it ships in the function bundle; verified in prod. Diagram labels match the locked module names.
 - [x] Error path: `{ "status": "error", "error": "...", "response": null, "steps": [] }` — input validated before dispatch, unexpected failures wrapped in a readable sentence; verified in prod.

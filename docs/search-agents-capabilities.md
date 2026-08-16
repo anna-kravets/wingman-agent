@@ -220,13 +220,13 @@ Recorded honestly rather than papered over — real schedules change daily.
 
 **Not Person B's, but blocking submission:**
 
-1. **`/api/agent_info` returns `prompt_examples: []`** — a hard graded requirement (each needs
-   `prompt`, `full_response`, `steps`).
+1. ~~**`/api/agent_info` returns `prompt_examples: []`**~~ — **resolved 16/8/2026.** It now returns
+   the successful LH318 example with its `prompt`, complete `full_response`, and all eight real
+   `steps`.
 2. **Its `description` does not say prices are estimates**, which the 9/8 data-source decision
    requires.
-3. ~~These two are blocked behind the Supervisor's stubs.~~ **Unblocked 14/8/2026** — the seams
-   now make real LLM calls, so a captured trace would be honest. `prompt_examples[]` can be filled
-   from a real run whenever Person A is ready (an `agent/prompt-examples` branch is in flight).
+3. ~~These two are blocked behind the Supervisor's stubs.~~ **Resolved** — the seams make real LLM
+   calls and the captured prompt example is now included in the endpoint.
 
 **Still worth raising:**
 

@@ -14,6 +14,7 @@ load_dotenv()
 
 from lib import conversation
 from lib.agents import supervisor
+from api.prompt_examples import PROMPT_EXAMPLES
 
 app = FastAPI()
 logger = logging.getLogger(__name__)
@@ -93,11 +94,7 @@ AGENT_INFO = {
             "What you need: all of it"
         ),
     },
-    # BLOCKED until Phase 2/3: `full_response` and `steps` must be captured verbatim from a real
-    # /api/execute run. They cannot be written by hand — `steps` has to match the actual LLM calls
-    # and the module names in the architecture PNG, and a grader can diff them against a live run.
-    # Fill this in as the last integration step, not before the agents exist.
-    "prompt_examples": [],
+    "prompt_examples": PROMPT_EXAMPLES,
 }
 
 
