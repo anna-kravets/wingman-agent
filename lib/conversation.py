@@ -3,6 +3,8 @@ from datetime import UTC, datetime
 
 from supabase import Client, create_client
 
+from lib.citations import citations_from_results
+
 _client: Client | None = None
 
 
@@ -58,6 +60,24 @@ def save_history(
     ).execute()
 
 
+def _messages(history: object) -> list[dict]:
+    messages: list[dict] = []
+    for turn in history if isinstance(history, list) else []:
+        if not isinstance(turn, dict):
+            continue
+        prompt = turn.get("prompt")
+        answer = turn.get("response")
+        if isinstance(prompt, str):
+            messages.append({"role": "user", "content": prompt})
+        if isinstance(answer, str):
+            message = {"role": "assistant", "content": answer}
+            citations = citations_from_results(turn.get("results"))
+            if citations:
+                message["citations"] = citations
+            messages.append(message)
+    return messages
+
+
 def list_conversations(owner_id: str, limit: int = 30) -> list[dict]:
     if not _is_configured():
         return []
@@ -74,16 +94,6 @@ def list_conversations(owner_id: str, limit: int = 30) -> list[dict]:
     conversations = []
     for row in res.data or []:
         history = row.get("history") if isinstance(row, dict) else []
-        messages = []
-        for turn in history if isinstance(history, list) else []:
-            if not isinstance(turn, dict):
-                continue
-            prompt = turn.get("prompt")
-            answer = turn.get("response")
-            if isinstance(prompt, str):
-                messages.append({"role": "user", "content": prompt})
-            if isinstance(answer, str):
-                messages.append({"role": "assistant", "content": answer})
 
         conversations.append(
             {
@@ -91,7 +101,7 @@ def list_conversations(owner_id: str, limit: int = 30) -> list[dict]:
                 "title": row.get("title") or "New conversation",
                 "createdAt": row.get("created_at"),
                 "updatedAt": row.get("updated_at"),
-                "messages": messages,
+                "messages": _messages(history),
             }
         )
     return conversations

@@ -19,6 +19,12 @@ COMPLETE = "LH318 TLV -> FRA was cancelled at the gate"
 MODULES = {"Supervisor", "FlightAgent", "AccommodationAgent", "DocumentationAgent"}
 
 
+def test_supervisor_completion_guards_share_the_project_10k_ceiling():
+    assert supervisor.REFINE_MAX_COMPLETION_TOKENS == 10_000
+    assert supervisor.COMPOSE_MAX_COMPLETION_TOKENS == 10_000
+    assert supervisor.COMPOSE_REPAIR_MAX_COMPLETION_TOKENS == 10_000
+
+
 @pytest.fixture(autouse=True)
 def no_cost_documentation_agent(monkeypatch):
     """The harness tests exercise orchestration, not paid retrieval/model calls."""
@@ -79,6 +85,51 @@ def test_documentation_agent_emits_three_steps_for_its_reflection_loop():
     # The reason the interface contract is (payload, steps) rather than one step.
     _, steps, _ = supervisor.run(COMPLETE, [])
     assert modules_of(steps).count("DocumentationAgent") == 3
+
+
+def test_supervisor_passively_preserves_cited_legal_passages(monkeypatch):
+    payload = {
+        "regulation": "EU 261/2004",
+        "entitlements": [{
+            "kind": "refund",
+            "summary": "Choose reimbursement.",
+            "source": "[S1] EU 261 Art. 8(1)(a)",
+            "confidence": "high",
+        }],
+        "next_actions": [],
+        "caveats": [],
+    }
+    evidence = """Passenger facts:
+Cancelled flight.
+
+Retrieved evidence:
+[S1] Regulation (EC) No 261/2004
+Namespace: rights-eu
+Retrieval score: 0.900000
+Selection reason: coverage_recovery:refund_rerouting
+Document type: passenger_rights
+Section: Regulation (EC) No 261/2004 > Article 8
+Provision ID: eu_regulation_261_2004:article_8
+Legal citation: Regulation (EC) No 261/2004
+Official source: https://example.test/eu261.pdf
+Excerpt:
+Passengers shall be offered reimbursement or re-routing.
+
+Write the grounded draft."""
+    monkeypatch.setattr(
+        documentation_agent,
+        "run",
+        lambda request, history: (
+            payload,
+            [make_step("DocumentationAgent", "unchanged system prompt", evidence, payload)],
+        ),
+    )
+
+    _, _, results = supervisor.run(COMPLETE, [])
+
+    assert results["rights"] == payload
+    assert results["citations"][0]["id"] == "S1"
+    assert results["citations"][0]["excerpt"].startswith("Passengers shall")
 
 
 # --- follow-up turns ------------------------------------------------------------
@@ -989,6 +1040,181 @@ def test_an_explicit_hotel_request_is_searched_even_when_the_flight_leaves_today
     # Tonight until tomorrow: the honest default when no later flight sets the nights.
     assert f"Check in: {date.today().isoformat()}" in stay["prompt"]["user_prompt"]
     assert "Nights: 1" in stay["prompt"]["user_prompt"]
+
+
+def test_an_explicit_hotel_request_on_the_first_turn_is_not_lost_among_other_needs(
+        monkeypatch):
+    """The reported request needed flight, stay and rights in the same message.
+
+    The old override only handled needs == ["stay"], so the same-day flight made
+    AccommodationAgent disappear despite the words "I need a hotel tonight".
+    """
+    from lib.agents import flight_agent
+
+    soon = datetime(2026, 8, 16, 16, 30)
+    payload = {
+        "options": [{"id": "F1", "flight_number": "LH 687",
+                     "depart": soon.isoformat(), "origin": "TLV", "destination": "FRA"}],
+        "recommended_id": "F1",
+        "caveats": ["CONFIRM: this flight leaves in 30 minutes."],
+    }
+    monkeypatch.setattr(flight_agent, "run", lambda *a, **k: (payload, []))
+
+    prompt = ("LH318 TLV -> FRA was cancelled at the gate. "
+              "I need a hotel tonight, meals, and another flight.")
+    _, steps, _ = supervisor.run(
+        prompt, [], local_time=datetime(2026, 8, 16, 16, 0))
+
+    stay = next(s for s in steps if s["module"] == "AccommodationAgent")
+    asked = stay["prompt"]["user_prompt"]
+    assert "Check in: 2026-08-16" in asked
+    assert "Check out: 2026-08-17" in asked
+    # A one-night search must not pretend it is arranged around a flight that
+    # leaves before the night has even begun.
+    assert "Onward flight departs: None" in asked
+
+
+def test_the_composer_repairs_an_answer_that_drops_prices_and_legal_details(monkeypatch):
+    """Facts reaching the prompt is not enough; they must survive the final prose."""
+    results = {
+        "stay": {
+            "options": [{"id": "H1", "name": "Airport Plaza", "distance_km": 2.4,
+                         "price_estimate": "Roughly EUR 90-150 (estimate)",
+                         "meals": "unknown"}],
+            "recommended_id": "H1",
+            "caveats": [],
+        },
+        "rights": {
+            "regulation": "multiple",
+            "entitlements": [{
+                "kind": "refund",
+                "summary": "Reimbursement must be paid within 21 days after a written application.",
+                "source": "[S3] Aviation Services Law s.6(a)(2)",
+                "confidence": "high",
+            }],
+            "next_actions": [],
+            "caveats": [],
+        },
+    }
+    complete = supervisor._digest(results, [])
+    answers = iter([
+        "Airport Plaza is nearby. A refund may be available.",
+        complete,
+    ])
+
+    def lossy_then_complete(module, system_prompt, user_prompt, **kwargs):
+        answer = next(answers)
+        return answer, make_step(module, system_prompt, user_prompt, {"text": answer})
+
+    monkeypatch.setattr(supervisor.llm, "call", lossy_then_complete)
+    request = {
+        "airline": "LH", "flight_number": "LH318", "origin": "TLV",
+        "destination": "FRA", "disruption": "cancelled", "party_size": 2,
+        "local_now": "2026-08-16T16:00:00", "_passenger_prompt": "Help me.",
+    }
+
+    text, steps = supervisor._compose(request, results, [], [])
+
+    assert len(steps) == 2
+    assert "90-150" in text
+    assert "21 days" in text
+    assert "Aviation Services Law" in text
+    assert "s.6(a)(2)" in text
+
+
+def test_the_composer_rejects_recommending_an_urgent_flight_over_the_safe_choice():
+    results = {"flight": {
+        "options": [
+            {"id": "F1", "flight_number": "LH 687", "depart": "2026-08-16T16:30:00"},
+            {"id": "F2", "flight_number": "LY 357", "depart": "2026-08-17T06:05:00"},
+        ],
+        "recommended_id": "F2",
+        "caveats": [
+            "CONFIRM: LH 687 leaves in 30 minutes. Treat it as an urgent possibility, "
+            "not a reliable replacement until seats and boarding are confirmed."
+        ],
+    }}
+    bad = ("Earliest reasonable replacement: LH 687. I would push Lufthansa for "
+           "LH 687 first. LY 357 is the next best fallback. Confirm seats and boarding.")
+
+    issues = supervisor._composition_issues(bad, {"_passenger_prompt": "help"}, results)
+
+    assert any("unsafe recommendation" in issue for issue in issues)
+
+
+def test_the_composer_rejects_counting_the_child_twice():
+    issues = supervisor._composition_issues(
+        "For 2 guests, call ahead. Can the hotel place all 3 of you in one private room?",
+        {"party_size": 2, "_passenger_prompt": "I am travelling with one child."},
+        {},
+    )
+
+    assert "party size is 2, not 3" in issues
+
+
+def test_a_baggage_evidence_gap_cannot_become_a_no_rights_claim():
+    results = {"rights": {"entitlements": [], "caveats": [
+        "The supplied evidence does not establish a separate baggage-care entitlement."
+    ]}}
+    issues = supervisor._composition_issues(
+        "Your baggage does not create any extra remedy.",
+        {"_passenger_prompt": "My checked bags are with the airline."},
+        results,
+    )
+
+    assert any("non-categorical" in issue for issue in issues)
+
+
+def test_checked_bags_require_a_practical_handling_instruction():
+    request = {"_passenger_prompt": "My checked bags are with the airline."}
+
+    missing = supervisor._composition_issues(
+        "Your checked bags are still with the airline.", request, {},
+    )
+    actionable = supervisor._composition_issues(
+        "Ask whether your bags will stay checked through or be returned, and how they will "
+        "be transferred if the replacement uses another carrier.",
+        request,
+        {},
+    )
+
+    assert "a practical checked-baggage instruction" in missing
+    assert "a practical checked-baggage instruction" not in actionable
+
+
+def test_stay_dates_cannot_be_presented_as_confirmed_availability():
+    results = {"stay": {"options": [{
+        "id": "H1", "name": "Airport Plaza",
+        "price_estimate": "Roughly EUR 90-150 (estimate)",
+        "check_in": "2026-08-16", "check_out": "2026-08-17",
+    }], "recommended_id": "H1"}}
+
+    issues = supervisor._composition_issues(
+        "Airport Plaza, EUR 90-150. Availability: 2026-08-16 to 2026-08-17.",
+        {"_passenger_prompt": "hotel please"}, results,
+    )
+
+    assert "stay dates must not be labelled as room availability" in issues
+    assert "room availability is not confirmed" in issues
+
+
+def test_a_hotel_price_follow_up_reuses_the_saved_options_without_another_search():
+    history = [{
+        "prompt": COMPLETE,
+        "response": "Here are the hotels.",
+        "results": {"stay": {
+            "options": [{"id": "H1", "name": "Airport Plaza", "distance_km": 2.4,
+                         "price_estimate": "Roughly EUR 90-150 (estimate)"}],
+            "recommended_id": "H1", "caveats": [],
+        }},
+    }]
+
+    text, steps, results = supervisor.run(
+        "What about hotels? Suggest nearby options and include prices.", history)
+
+    assert "AccommodationAgent" not in modules_of(steps)
+    assert results["stay"]["options"][0]["name"] == "Airport Plaza"
+    assert "90-150" in text
 
 
 def test_the_gate_still_asks_when_a_flight_search_is_wanted():

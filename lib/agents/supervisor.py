@@ -16,9 +16,11 @@ line of conversation.
 """
 
 import logging
+import re
 from datetime import datetime, timedelta
 
 from lib import llm
+from lib.citations import extract_citations
 from lib.agents import accommodation_agent, documentation_agent, flight_agent
 from lib.tools import airports, flights
 
@@ -75,11 +77,17 @@ INCIDENT_PAST_LIMIT_DAYS = 14
 
 NEEDS = ("flight", "stay", "rights")
 DISRUPTIONS = ("delayed", "cancelled", "denied_boarding")
+STAY_REQUEST_RE = re.compile(
+    r"\b(hotels?|hotles?|accommodat(?:ion|ions|e)|rooms?|beds?|sleep|overnight)\b",
+    re.IGNORECASE,
+)
 
-# Runaway guards, not targets: both outputs are small, but an uncapped completion on a
-# reasoning model is an uncapped charge against the $13 (`docs/PROJECT_PLAN.md` §5).
-REFINE_MAX_COMPLETION_TOKENS = 4_000
-COMPOSE_MAX_COMPLETION_TOKENS = 4_000
+# Runaway guards, not output targets. Keep the shared 10k ceiling used by the
+# DocumentationAgent: a critical answer must not be truncated because its plan contains
+# several flights, hotels and legal regimes. Normal completions remain far shorter.
+REFINE_MAX_COMPLETION_TOKENS = 10_000
+COMPOSE_MAX_COMPLETION_TOKENS = 10_000
+COMPOSE_REPAIR_MAX_COMPLETION_TOKENS = 10_000
 
 QUESTIONS = {
     "flight_number": "Which airline and flight number was it?",
@@ -161,9 +169,36 @@ you, not to a system.
 Speak to one tired person, not to a user. Short sentences, active voice, no jargon and no
 regulation-speak they would have to decode.
 
+"Party size" is the total number of travellers, including the passenger and any child mentioned in
+their message. Never add the child a second time. If Party size is 2, every room or group reference
+must say 2, never 3.
+
 If "Earlier in this conversation" is not shown below, this is the first message: write the full plan.
 Lead with the flight, then where they sleep, then what they are owed and what to do about it - that
 is the order they need it in.
+
+Completeness is part of correctness. Do not silently compress away a finding:
+- For each flight shown, keep its flight number and departure time. These are schedule options, not
+  confirmed seats or completed rebookings; say what the airline still needs to confirm. The option
+  labelled "Recommended" in the findings is the recovery plan. Never call a different, near-departure
+  flight the "earliest reasonable replacement", never tell the passenger to push for it first, and
+  never undo the deterministic recommendation in your prose. It may be mentioned only as an urgent
+  possibility that is unsafe to rely on until confirmed.
+- For each sleep option shown, keep its name, distance, rough price range, property type, and what is
+  or is not known about meals and availability. A passenger asking for suggestions needs the prices
+  in the first answer, not only after asking for a comparison. Check-in/check-out are requested stay
+  dates, not proof of room availability: never label those dates "Availability" and always say that
+  actual room availability was not checked or confirmed.
+- Cover every entitlement listed under "What you are owed". Preserve exact payment deadlines,
+  monetary amounts, important exceptions, the human-readable document/law named in its source,
+  and its supplied section/article references. If the findings say a requested topic such as
+  baggage was not established, say that too.
+- An evidence gap means "the supplied sources did not establish this", not "you have no right".
+  Never turn a missing baggage passage into a categorical statement that baggage creates no remedy.
+- If the passenger says checked bags are still with the airline, give one practical baggage action:
+  ask the airline whether the bags will stay checked through to the replacement flight or be returned,
+  and how they will be transferred if the replacement uses another carrier. Do not invent a legal
+  baggage entitlement when the findings do not establish one.
 
 If "Earlier in this conversation" IS shown below, this is a follow-up in a conversation already under
 way. The passenger has already read everything down there, including your own earlier replies word
@@ -191,6 +226,14 @@ the ones you have not already told them earlier in this conversation.
 
 End by inviting a follow-up: the passenger can compare options or ask about the terms of any one of
 them. Skip that invitation if you already gave it and nothing about the plan has changed since.
+"""
+
+COMPOSE_REPAIR_SYSTEM_PROMPT = COMPOSE_SYSTEM_PROMPT + """
+
+You are revising a draft that failed a deterministic completeness check. Rewrite the entire answer,
+not just the missing sentences. Correct every listed omission using only the supplied findings. Keep
+the answer calm and readable, but never trade away a concrete price, deadline, source document,
+requested evidence gap, or option identity for brevity.
 """
 
 
@@ -244,14 +287,35 @@ def _tonight_window(request: dict, flight_payload: dict | None) -> dict:
     plan can still say their flight leaves today and they may not need the room.
     """
     now = datetime.fromisoformat(request["local_now"])
-    option = _recommended(flight_payload or {}) or {}
     return {
         "check_in": now.date().isoformat(),
         "check_out": (now.date() + timedelta(days=1)).isoformat(),
         "nights": 1,
         "guests": request.get("party_size"),
-        "departs": option.get("depart"),
+        # This fallback exists precisely because the selected flight does not imply
+        # an overnight stay. Passing its same-day departure to AccommodationAgent
+        # produced a one-night booking optimized for a flight leaving before check-in.
+        "departs": None,
     }
+
+
+def _explicit_stay_requested(request: dict) -> bool:
+    """Whether the passenger asked for a place to sleep in this message."""
+    return bool(STAY_REQUEST_RE.search(str(request.get("_passenger_prompt") or "")))
+
+
+def _same_day_flight_assumption(request: dict, flight_payload: dict | None) -> str | None:
+    """Explain the branch behind a fallback hotel search, if there is one."""
+    option = _recommended(flight_payload or {})
+    if not option or not option.get("depart"):
+        return None
+    now = datetime.fromisoformat(request["local_now"])
+    depart = datetime.fromisoformat(option["depart"])
+    if depart.date() != now.date():
+        return None
+    number = option.get("flight_number") or "the same-day flight"
+    return (f"Hotel options assume you are not taking {number} today; confirm your onward "
+            "flight before relying on a room for tonight.")
 
 
 def _history_block(history: list[dict]) -> list[str]:
@@ -677,23 +741,317 @@ def _compose_prompt(request: dict, digest: str, history: list[dict]) -> str:
     return "\n".join(lines)
 
 
+RIGHTS_TERMS = {
+    "rebooking": ("rebook", "rerout", "replacement"),
+    "refund": ("refund", "reimburse"),
+    "hotel": ("hotel", "accommodation", "place to stay"),
+    "meals": ("meal", "food", "refreshment", "beverage"),
+    "cash_compensation": ("compensation",),
+}
+
+NUMBER_WORDS = {
+    "one": "1", "two": "2", "three": "3", "four": "4", "five": "5",
+    "six": "6", "seven": "7", "eight": "8", "nine": "9", "ten": "10",
+}
+
+
+def _compact(value) -> str:
+    """Case/punctuation-insensitive text for deterministic presence checks."""
+    return re.sub(r"[^a-z0-9€₪$]+", "", str(value or "").lower())
+
+
+def _has_any(text: str, choices: tuple[str, ...]) -> bool:
+    compact = _compact(text)
+    return any(_compact(choice) in compact for choice in choices)
+
+
+def _deadline_requirements(summary: str) -> list[tuple[str, tuple[str, ...]]]:
+    """Concrete statutory deadlines that must survive prose composition."""
+    found = re.findall(
+        r"\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+days?\b",
+        summary or "", re.IGNORECASE,
+    )
+    requirements = []
+    for value in found:
+        lower = value.lower()
+        digit = NUMBER_WORDS.get(lower, lower)
+        aliases = (f"{lower} days", f"{digit} days")
+        requirements.append((f"the {lower}-day deadline", aliases))
+    return requirements
+
+
+def _money_requirements(value: str) -> list[tuple[str, tuple[str, ...]]]:
+    """Currency amounts, accepting either codes or familiar symbols."""
+    requirements = []
+    aliases = {"EUR": ("EUR", "€"), "NIS": ("NIS", "ILS", "₪"),
+               "ILS": ("ILS", "NIS", "₪"), "USD": ("USD", "$")}
+    for currency, amount in re.findall(
+            r"\b(EUR|NIS|ILS|USD)\s*([\d,]+(?:\.\d+)?)", value or "", re.IGNORECASE):
+        clean = amount.replace(",", "")
+        ways = tuple(f"{mark} {clean}" for mark in aliases[currency.upper()])
+        requirements.append((f"{currency.upper()} {amount}", ways))
+    return requirements
+
+
+def _citation_requirements(source: str) -> list[tuple[str, tuple[str, ...]]]:
+    """Section/article references, with plain-language aliases."""
+    requirements = []
+    pattern = r"\b(s\.|Art\.)\s*([0-9]+(?:\([a-zA-Z0-9]+\))*(?:-[0-9()a-zA-Z]+)?)"
+    for prefix, reference in re.findall(pattern, source or "", re.IGNORECASE):
+        if prefix.lower().startswith("s"):
+            aliases = (f"s. {reference}", f"s.{reference}", f"section {reference}")
+            label = f"section {reference} citation"
+        else:
+            aliases = (f"Art. {reference}", f"Art.{reference}", f"Article {reference}")
+            label = f"Article {reference} citation"
+        requirements.append((label, aliases))
+    return requirements
+
+
+def _composition_issues(text: str, request: dict, results: dict) -> list[str]:
+    """Critical facts a fluent draft is not allowed to drop.
+
+    This deliberately checks concrete identities, amounts, deadlines and source
+    families rather than trying to judge natural-language legal reasoning. The latter
+    remains DocumentationAgent's reflection job; this guard verifies delivery.
+    """
+    issues: list[str] = []
+
+    flight_payload = results.get("flight") or {}
+    for option in _options(flight_payload):
+        number = option.get("flight_number")
+        if number and not _has_any(text, (str(number),)):
+            issues.append(f"flight option {number}")
+
+    recommended_flight = _recommended(flight_payload)
+    if recommended_flight and recommended_flight.get("flight_number"):
+        compact = _compact(text)
+        number = _compact(recommended_flight["flight_number"])
+        position = compact.find(number)
+        recommendation_words = tuple(_compact(word) for word in
+                                     ("recommended", "reasonable option", "primary plan",
+                                      "best option", "best fallback", "plan around"))
+        if position < 0 or not any(
+                word in compact[max(0, position - 180):position + len(number) + 180]
+                for word in recommendation_words):
+            issues.append(f"clear recommendation of {recommended_flight['flight_number']}")
+
+    flight_caveats = " ".join(str(c) for c in flight_payload.get("caveats") or [])
+    if "urgent possibility" in flight_caveats.lower():
+        lowered = text.lower()
+        confirms_actionability = ("confirm" in lowered and any(
+            word in lowered for word in ("seat", "rebook", "board", "gate")))
+        if not confirms_actionability:
+            issues.append("confirmation that the urgent flight has seats and is still boardable")
+        urgent_numbers = re.findall(
+            r"\b([A-Z0-9]{2}\s*\d{1,4})\s+leaves\b", flight_caveats,
+            re.IGNORECASE,
+        )
+        for urgent in urgent_numbers:
+            flight_pattern = r"\s*".join(map(re.escape, urgent.split()))
+            unsafe = (
+                rf"earliest\s+reasonable\s+replacement.{{0,180}}{flight_pattern}",
+                rf"(?:push|recommend|choose|take|book).{{0,120}}{flight_pattern}.{{0,60}}\b(?:first|now)\b",
+            )
+            if any(re.search(pattern, text, re.IGNORECASE | re.DOTALL) for pattern in unsafe):
+                issues.append(f"unsafe recommendation of urgent flight {urgent}")
+
+    for option in _options(results.get("stay")):
+        name = option.get("name")
+        if name and not _has_any(text, (str(name),)):
+            issues.append(f"stay option {name}")
+        price = str(option.get("price_estimate") or "")
+        for label, aliases in _money_requirements(price):
+            if not _has_any(text, aliases):
+                issues.append(f"{name or 'stay'} price {label}")
+        # Ranges may contain the currency only once (EUR 90-150), so the second
+        # bound is not returned by _money_requirements. Preserve every number.
+        for amount in re.findall(r"\d[\d,]*(?:\.\d+)?", price):
+            clean = amount.replace(",", "")
+            if clean not in _compact(text):
+                issues.append(f"{name or 'stay'} price bound {amount}")
+
+    if _options(results.get("stay")):
+        if re.search(r"\bavailability\s*:\s*20\d{2}-\d{2}-\d{2}", text,
+                     re.IGNORECASE):
+            issues.append("stay dates must not be labelled as room availability")
+        lowered = text.lower()
+        availability_honest = ("availability" in lowered and any(
+            phrase in lowered for phrase in ("not confirmed", "not checked", "cannot confirm")))
+        if not availability_honest:
+            issues.append("room availability is not confirmed")
+
+    rights = results.get("rights") or {}
+    for item in rights.get("entitlements") or []:
+        kind = str(item.get("kind") or "")
+        summary = str(item.get("summary") or "")
+        terms = RIGHTS_TERMS.get(kind)
+        if terms and not _has_any(text, terms):
+            issues.append(f"{kind} entitlement")
+        if kind == "other":
+            communication = tuple(word for word in
+                                  ("communication", "telephone", "phone", "email", "message")
+                                  if word in summary.lower())
+            if communication and not _has_any(text, communication):
+                issues.append("communication entitlement")
+        for label, aliases in _deadline_requirements(summary) + _money_requirements(summary):
+            if not _has_any(text, aliases):
+                issues.append(label)
+
+        source = str(item.get("source") or "")
+        if "Aviation Services Law" in source and not _has_any(text, ("Aviation Services Law",)):
+            issues.append("Aviation Services Law source")
+        if re.search(r"\bEU\s*261\b", source, re.IGNORECASE) and not _has_any(
+                text, ("EU 261", "EU261")):
+            issues.append("EU 261 source")
+        if "Conditions of Carriage" in source and not _has_any(
+                text, ("Conditions of Carriage",)):
+            issues.append("Conditions of Carriage source")
+        if "Contract of Carriage" in source and not _has_any(
+                text, ("Contract of Carriage",)):
+            issues.append("Contract of Carriage source")
+        for label, aliases in _citation_requirements(source):
+            if not _has_any(text, aliases):
+                issues.append(label)
+
+    passenger = str(request.get("_passenger_prompt") or "").lower()
+    if re.search(r"\bbags?|baggage\b", passenger):
+        caveats = " ".join(str(c) for c in rights.get("caveats") or [])
+        mentions_baggage = re.search(r"\b(?:bags?|baggage)\b", text, re.IGNORECASE)
+        if not mentions_baggage:
+            issues.append("a practical checked-baggage instruction")
+        elif not re.search(
+                r"\b(?:bags?|baggage)\b.{0,180}\b(?:return(?:ed)?|retrieve|collect|"
+                r"transfer(?:red)?|remain checked|stay checked|handling|where)\b|"
+                r"\b(?:return(?:ed)?|retrieve|collect|transfer(?:red)?|handling|where)\b"
+                r".{0,180}\b(?:bags?|baggage)\b",
+                text, re.IGNORECASE | re.DOTALL):
+            issues.append("a practical checked-baggage instruction")
+        if re.search(r"\bbags?|baggage\b", caveats, re.IGNORECASE) and not mentions_baggage:
+            issues.append("the baggage evidence gap")
+        if re.search(r"\b(?:bags?|baggage)\b.{0,100}\bdoes not (?:create|give|provide)\b",
+                     text, re.IGNORECASE | re.DOTALL):
+            issues.append("non-categorical wording for the baggage evidence gap")
+
+    rights_caveats = " ".join(str(c) for c in rights.get("caveats") or [])
+    if "applicab" in rights_caveats.lower():
+        lowered = text.lower()
+        if "applicab" not in lowered or not any(
+                word in lowered for word in ("uncertain", "depends", "may apply", "not established")):
+            issues.append("the EU 261 applicability caveat")
+
+    party_size = request.get("party_size")
+    if isinstance(party_size, int) and party_size > 0:
+        count_patterns = (
+            r"\b(?:all\s+)?(\d+)\s+(?:of\s+you|guests|travell?ers|people|passengers)\b",
+            r"\b(?:room|room\s+setup|setup)\s+for\s+(\d+)\b",
+        )
+        mentioned = [int(count) for pattern in count_patterns
+                     for count in re.findall(pattern, text, re.IGNORECASE)]
+        wrong = sorted({count for count in mentioned if count != party_size})
+        if wrong:
+            issues.append(
+                f"party size is {party_size}, not {', '.join(map(str, wrong))}"
+            )
+
+    for assumption in request.get("assumptions") or []:
+        if str(assumption).startswith("Hotel options assume"):
+            number = re.search(r"\b[A-Z0-9]{2}\s*\d{1,4}\b", str(assumption))
+            has_branch = _has_any(text, ("not taking", "if you do not take", "if you don't take"))
+            if not has_branch or (number and not _has_any(text, (number.group(0),))):
+                issues.append("the same-day-flight assumption behind the hotel search")
+
+    return list(dict.fromkeys(issues))
+
+
+def _repair_prompt(original_prompt: str, draft: str, issues: list[str]) -> str:
+    return "\n".join([
+        "Original task and verified findings:",
+        original_prompt,
+        "",
+        "Draft that must be revised:",
+        draft,
+        "",
+        "Required facts missing from that draft:",
+        *[f"- {issue}" for issue in issues],
+    ])
+
+
+def _reuse_prior_stay(request: dict, history: list[dict]) -> dict | None:
+    """Reuse already-paid hotel options for a detail/price follow-up.
+
+    Asking for more, different, closer or cheaper properties is a new search. Asking
+    to see, compare or price the options already found is composition only.
+    """
+    prior = _prior_results(history).get("stay")
+    if not prior:
+        return None
+    message = str(request.get("_passenger_prompt") or "")
+    if re.search(r"\b(other|more|different|new|another|closer|cheaper)\b", message,
+                 re.IGNORECASE):
+        return None
+    if re.search(r"\b(what about|suggest|show|compare|which|price|cost|details?|options?)\b",
+                 message, re.IGNORECASE):
+        return prior
+    return None
+
+
 def _compose(
     request: dict, results: dict, failures: list[str], history: list[dict]
 ) -> tuple[str, list[dict]]:
     """Results -> the passenger's plan, as text. Returns (text, steps)."""
     digest = _digest(results, failures)
+    assumptions = request.get("assumptions") or []
+    safe_digest = digest
+    if assumptions:
+        safe_digest = ("ASSUMPTIONS BEHIND THIS PLAN\n"
+                       + "\n".join(f"  - {item}" for item in assumptions)
+                       + "\n\n" + digest)
+    if re.search(r"\b(?:bags?|baggage)\b",
+                 str(request.get("_passenger_prompt") or ""), re.IGNORECASE):
+        safe_digest += (
+            "\n\nCHECKED BAGS\n"
+            "  - Ask the airline whether your bags will stay checked through to the replacement "
+            "flight or be returned, and how they will be transferred if you change carriers."
+        )
+    prompt = _compose_prompt(request, digest, history)
     try:
         text, step = llm.call(
             MODULE,
             COMPOSE_SYSTEM_PROMPT,
-            _compose_prompt(request, digest, history),
+            prompt,
             max_completion_tokens=COMPOSE_MAX_COMPLETION_TOKENS,
         )
     except llm.LLMError as exc:
         # Up to six calls and two API quotas are already spent by the time we compose.
         # Losing all of it to the last call is worse than handing over the flat version.
-        return digest, exc.steps
-    return (text or "").strip() or digest, [step]
+        return safe_digest, exc.steps
+
+    draft = (text or "").strip()
+    if not draft:
+        return safe_digest, [step]
+    issues = _composition_issues(draft, request, results)
+    if not issues:
+        return draft, [step]
+
+    # Pay for a second composition only when the first objectively lost critical
+    # facts. This is a bounded repair, not an open-ended reflection loop.
+    try:
+        repaired, repair_step = llm.call(
+            MODULE,
+            COMPOSE_REPAIR_SYSTEM_PROMPT,
+            _repair_prompt(prompt, draft, issues),
+            max_completion_tokens=COMPOSE_REPAIR_MAX_COMPLETION_TOKENS,
+        )
+    except llm.LLMError as exc:
+        return safe_digest, [step] + exc.steps
+
+    repaired = (repaired or "").strip()
+    if repaired and not _composition_issues(repaired, request, results):
+        return repaired, [step, repair_step]
+    # The flat digest is less elegant, but it is complete and grounded. Never return
+    # a polished answer that is known to have discarded the passenger's key facts.
+    return safe_digest, [step, repair_step]
 
 
 def run(prompt: str, history: list[dict], *,
@@ -734,11 +1092,23 @@ def run(prompt: str, history: list[dict], *,
     results: dict = {}
     failures: list[str] = []
 
+    # A price/detail follow-up should use the properties already stored on the turn,
+    # not spend another AccommodationAgent call to rediscover the same OSM rows.
+    if "stay" in needs:
+        prior_stay = _reuse_prior_stay(request, history)
+        if prior_stay:
+            results["stay"] = prior_stay
+            needs = [need for need in needs if need != "stay"]
+
     # One agent failing must not cost the passenger the rest of the plan.
     def dispatch(key: str, fn, *args):
         try:
             payload, agent_steps = fn(*args, history)
             results[key] = payload
+            if key == "rights":
+                citations = extract_citations(payload, agent_steps)
+                if citations:
+                    results["citations"] = citations
             steps.extend(agent_steps)
         except Exception as exc:
             # A call that was made and then failed is still a call, and the spec wants
@@ -763,11 +1133,15 @@ def run(prompt: str, history: list[dict], *,
     if "stay" in needs:
         known_flight = results.get("flight") or _prior_results(history).get("flight")
         stay_window = _stay_window(request, known_flight)
-        # `needs == ["stay"]` means the narrowing decided this message was *about* a
-        # bed. Then the passenger asked, and being asked outranks our own inference
-        # that a same-day flight makes a room unnecessary.
-        if not stay_window and needs == ["stay"]:
+        # An explicit request outranks the calendar-date inference on both first
+        # turns and narrowed follow-ups. A follow-up typo can still be understood by
+        # refinement as needs=["stay"], so keep that semantic signal too.
+        explicit_stay = _explicit_stay_requested(request) or needs == ["stay"]
+        if not stay_window and explicit_stay:
             stay_window = _tonight_window(request, known_flight)
+            assumption = _same_day_flight_assumption(request, known_flight)
+            if assumption and assumption not in request["assumptions"]:
+                request["assumptions"].append(assumption)
         if stay_window:
             dispatch("stay", accommodation_agent.run, request, stay_window)
 

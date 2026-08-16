@@ -382,6 +382,40 @@
     .bubble pre.md-code:last-child { margin-bottom: 0; }
     .bubble pre.md-code code { background: none; padding: 0; }
     .bubble a { color: #47703c; text-decoration: underline; text-underline-offset: 2px; }
+    .citation-link {
+      display: inline;
+      border: 0;
+      border-bottom: 1px solid rgba(71,112,60,.38);
+      background: rgba(153,202,60,.11);
+      color: #3f6935;
+      padding: 0 2px;
+      cursor: pointer;
+      font: inherit;
+      line-height: inherit;
+      text-align: inherit;
+    }
+    .citation-link:hover { border-bottom-color: #47703c; background: rgba(153,202,60,.2); }
+
+    .citation-sources { margin-top: 14px; border-top: 1px solid var(--line); color: #4f5c57; font-size: 12px; }
+    .citation-sources > summary { display: flex; align-items: center; gap: 8px; padding: 11px 0 7px; cursor: pointer; list-style: none; font-weight: 600; }
+    .citation-sources > summary::-webkit-details-marker { display: none; }
+    .citation-sources > summary::before { content: "§"; color: #657660; font-family: var(--mono); font-size: 11px; }
+    .citation-source-count { color: #7b8782; font-family: var(--mono); font-size: 10px; font-weight: 400; }
+    .citation-chip-list { display: flex; flex-wrap: wrap; gap: 7px; padding: 5px 0 4px; }
+    .citation-chip {
+      max-width: 100%;
+      border: 1px solid #d3dccd;
+      border-radius: 999px;
+      background: #f8faf5;
+      color: #43513f;
+      padding: 6px 10px;
+      cursor: pointer;
+      overflow: hidden;
+      font: 10.5px/1.25 var(--mono);
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .citation-chip:hover { border-color: #9eb58e; background: #f1f6ea; }
 
     .user .message-body { max-width: 620px; }
     .user .message-meta { color: #7b8581; text-align: right; }
@@ -517,6 +551,32 @@
     .dialog-button.danger:hover { background: #91332f; }
     .dialog-button:disabled { cursor: wait; opacity: .58; }
 
+    .source-dialog {
+      width: min(680px, calc(100% - 30px));
+      max-height: min(780px, calc(100vh - 34px));
+      border: 0;
+      border-radius: 22px;
+      background: var(--surface);
+      color: var(--ink);
+      padding: 0;
+      box-shadow: 0 28px 90px rgba(12,22,19,.3);
+    }
+    .source-dialog::backdrop { background: rgba(17,27,24,.55); backdrop-filter: blur(3px); }
+    .source-dialog-card { display: grid; max-height: inherit; grid-template-rows: auto minmax(0, 1fr); }
+    .source-dialog-header { display: flex; align-items: flex-start; gap: 18px; border-bottom: 1px solid var(--line); padding: 22px 23px 17px; }
+    .source-dialog-heading { min-width: 0; flex: 1; }
+    .source-kicker { display: block; margin-bottom: 6px; color: #607153; font: 10px/1.2 var(--mono); letter-spacing: .11em; text-transform: uppercase; }
+    .source-dialog h2 { margin: 0; color: #27332f; font-size: 19px; line-height: 1.3; letter-spacing: -.02em; }
+    .source-close { display: grid; place-items: center; flex: 0 0 auto; width: 34px; height: 34px; border: 1px solid var(--line); border-radius: 10px; background: #fff; color: #55625d; cursor: pointer; font-size: 19px; }
+    .source-close:hover { background: var(--surface-soft); }
+    .source-dialog-body { overflow-y: auto; padding: 19px 23px 23px; }
+    .source-meta { display: grid; gap: 5px; margin-bottom: 17px; color: #66736d; font-size: 12px; line-height: 1.5; }
+    .source-meta strong { color: #3d4a45; font-weight: 650; }
+    .source-excerpt-label { margin: 0 0 8px; color: #738079; font: 9px/1.2 var(--mono); letter-spacing: .11em; text-transform: uppercase; }
+    .source-excerpt { margin: 0; border-left: 2px solid #b8d485; background: #f7f9f3; padding: 15px 16px; color: #394640; font: 12px/1.7 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+    .source-official { display: inline-flex; align-items: center; gap: 6px; margin-top: 17px; color: #47703c; font-size: 12px; font-weight: 650; text-decoration: none; }
+    .source-official:hover { text-decoration: underline; text-underline-offset: 3px; }
+
     :focus-visible { outline: 3px solid rgba(153,202,60,.48); outline-offset: 2px; }
 
     @media (max-width: 850px) {
@@ -550,6 +610,7 @@
       .message.user { padding-left: 7%; }
       .message.assistant { padding-right: 0; }
       .bubble { padding: 14px 15px; }
+      .citation-chip-list { flex-direction: column; align-items: flex-start; }
       .composer-help { display: none; }
     }
 
@@ -646,6 +707,24 @@
     </div>
   </dialog>
 
+  <dialog class="source-dialog" id="source-dialog" aria-labelledby="source-dialog-title">
+    <article class="source-dialog-card">
+      <header class="source-dialog-header">
+        <div class="source-dialog-heading">
+          <span class="source-kicker" id="source-dialog-kicker">Legal source</span>
+          <h2 id="source-dialog-title">Source document</h2>
+        </div>
+        <button class="source-close" id="source-dialog-close" type="button" aria-label="Close source">×</button>
+      </header>
+      <div class="source-dialog-body">
+        <div class="source-meta" id="source-dialog-meta"></div>
+        <h3 class="source-excerpt-label">Retrieved passage</h3>
+        <blockquote class="source-excerpt" id="source-dialog-excerpt"></blockquote>
+        <a class="source-official" id="source-dialog-link" target="_blank" rel="noopener noreferrer">Open official document ↗</a>
+      </div>
+    </article>
+  </dialog>
+
   <script>
     const STORAGE_KEY = "wingman.conversations.v1";
     const MAX_CONVERSATIONS = 30;
@@ -668,6 +747,13 @@
     const deleteDialogError = document.getElementById("delete-dialog-error");
     const cancelDeleteButton = document.getElementById("cancel-delete");
     const confirmDeleteButton = document.getElementById("confirm-delete");
+    const sourceDialog = document.getElementById("source-dialog");
+    const sourceDialogKicker = document.getElementById("source-dialog-kicker");
+    const sourceDialogTitle = document.getElementById("source-dialog-title");
+    const sourceDialogMeta = document.getElementById("source-dialog-meta");
+    const sourceDialogExcerpt = document.getElementById("source-dialog-excerpt");
+    const sourceDialogLink = document.getElementById("source-dialog-link");
+    const sourceDialogClose = document.getElementById("source-dialog-close");
 
     let conversations = loadConversations();
     const hadStoredConversations = conversations.length > 0;
@@ -691,7 +777,17 @@
       try {
         const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
         if (!Array.isArray(parsed)) return [];
-        return parsed.filter(item => item && typeof item.id === "string" && Array.isArray(item.messages)).slice(0, MAX_CONVERSATIONS);
+        return parsed
+          .filter(item => item && typeof item.id === "string" && Array.isArray(item.messages))
+          .slice(0, MAX_CONVERSATIONS)
+          .map(item => ({
+            ...item,
+            messages: item.messages.map(message => {
+              if (message?.role !== "assistant" || Array.isArray(message.citations)) return message;
+              const citations = extractCitationsFromSteps(message.steps || []);
+              return citations.length ? { ...message, citations } : message;
+            }),
+          }));
       } catch {
         return [];
       }
@@ -724,7 +820,12 @@
             const messages = serverItem.messages.map((message, index) => {
               const localMessage = localItem?.messages?.[index];
               return localMessage?.role === message.role && localMessage?.content === message.content
-                ? { ...message, steps: localMessage.steps, createdAt: localMessage.createdAt }
+                ? {
+                    ...message,
+                    steps: localMessage.steps,
+                    citations: message.citations || localMessage.citations,
+                    createdAt: localMessage.createdAt,
+                  }
                 : message;
             });
             return {
@@ -817,17 +918,18 @@
       return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     }
 
-    function renderMarkdown(raw) {
+    function renderMarkdown(raw, citations = []) {
       const escaped = escapeHtml(String(raw ?? "")).replace(/\r\n/g, "\n");
       const codeBlocks = [];
       const withoutFences = escaped.replace(/```[^\n]*\n?([\s\S]*?)```/g, (_, code) => {
         codeBlocks.push(code.replace(/\n$/, ""));
         return ` CB${codeBlocks.length - 1} `;
       });
-      return withoutFences.split(/\n{2,}/).map(block => renderMarkdownBlock(block, codeBlocks)).join("");
+      return withoutFences.split(/\n{2,}/)
+        .map(block => renderMarkdownBlock(block, codeBlocks, citations)).join("");
     }
 
-    function renderMarkdownBlock(block, codeBlocks) {
+    function renderMarkdownBlock(block, codeBlocks, citations) {
       const trimmed = block.trim();
       if (!trimmed) return "";
 
@@ -839,20 +941,58 @@
       const isNumberedList = lines.every(line => /^\d+\.\s+/.test(line));
       if (isBulletList || isNumberedList) {
         const tag = isBulletList ? "ul" : "ol";
-        const items = lines.map(line => `<li>${renderInlineMarkdown(line.replace(/^(?:[-*]|\d+\.)\s+/, ""))}</li>`).join("");
+        const items = lines.map(line => `<li>${renderInlineMarkdown(line.replace(/^(?:[-*]|\d+\.)\s+/, ""), citations)}</li>`).join("");
         return `<${tag}>${items}</${tag}>`;
       }
 
-      return `<p>${renderInlineMarkdown(trimmed).replace(/\n/g, "<br>")}</p>`;
+      return `<p>${renderInlineMarkdown(trimmed, citations).replace(/\n/g, "<br>")}</p>`;
     }
 
-    function renderInlineMarkdown(text) {
+    function citationAliases(citations) {
+      const aliases = [];
+      const seen = new Set();
+      const add = (alias, citation) => {
+        const clean = String(alias || "").trim().replace(/[;,]+$/, "");
+        const key = clean.toLowerCase();
+        if (clean.length < 4 || seen.has(key) || !/^S\d+$/.test(citation.id || "")) return;
+        seen.add(key);
+        aliases.push({ alias: clean, citation });
+      };
+
+      citations.forEach(citation => {
+        add(`[${citation.id}]`, citation);
+        (citation.references || []).forEach(reference => {
+          add(reference, citation);
+          const provisions = String(reference).match(/(?:s\.|section|Art\.|Article)\s*\d+[\w().-]*(?:\([^)]*\))*?(?:-\([^)]*\))?/gi) || [];
+          provisions.forEach(provision => add(provision, citation));
+        });
+      });
+      return aliases.sort((a, b) => b.alias.length - a.alias.length);
+    }
+
+    function linkifyCitations(text, citations) {
+      const placeholders = [];
+      let result = text;
+      citationAliases(citations).forEach(({ alias, citation }) => {
+        const escapedAlias = escapeHtml(alias);
+        const pattern = new RegExp(escapedAlias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
+        result = result.replace(pattern, visible => {
+          const index = placeholders.length;
+          placeholders.push(`<button type="button" class="citation-link" data-citation-id="${citation.id}" aria-label="View source ${citation.id}">${visible}</button>`);
+          return ` CITATION${index} `;
+        });
+      });
+      return result.replace(/ CITATION(\d+) /g, (_, index) => placeholders[Number(index)]);
+    }
+
+    function renderInlineMarkdown(text, citations = []) {
       const codeSpans = [];
       let result = text.replace(/`([^`]+?)`/g, (_, code) => {
         codeSpans.push(code);
         return ` CS${codeSpans.length - 1} `;
       });
 
+      result = linkifyCitations(result, citations);
       result = result
         .replace(/\*\*([^*]+?)\*\*|__([^_]+?)__/g, (_, a, b) => `<strong>${a || b}</strong>`)
         .replace(/\*([^*]+?)\*|(?<![A-Za-z0-9])_([^_]+?)_(?![A-Za-z0-9])/g, (_, a, b) => `<em>${a || b}</em>`)
@@ -880,14 +1020,158 @@
       meta.textContent = message.role === "user" ? "You" : "Wingman";
       const bubble = document.createElement("div");
       bubble.className = "bubble";
-      bubble.innerHTML = renderMarkdown(message.content);
+      const citations = Array.isArray(message.citations) ? message.citations : [];
+      bubble.innerHTML = renderMarkdown(message.content, citations);
+      wireCitationButtons(bubble, citations);
       body.append(meta, bubble);
+
+      if (message.role === "assistant" && citations.length) {
+        body.appendChild(citationSourcesElement(citations));
+      }
 
       if (message.role === "assistant" && Array.isArray(message.steps) && message.steps.length) {
         body.appendChild(traceElement(message.steps));
       }
       row.appendChild(body);
       return row;
+    }
+
+    function citationChipLabel(citation) {
+      const section = String(citation.section || "").split(" > ").pop().trim();
+      const detail = section || citation.document || "Source passage";
+      return `${citation.id} · ${detail.length > 48 ? `${detail.slice(0, 47)}…` : detail}`;
+    }
+
+    function citationSourcesElement(citations) {
+      const details = document.createElement("details");
+      details.className = "citation-sources";
+      const summary = document.createElement("summary");
+      const label = document.createElement("span");
+      label.textContent = "Legal sources";
+      const count = document.createElement("span");
+      count.className = "citation-source-count";
+      count.textContent = `${citations.length} cited passage${citations.length === 1 ? "" : "s"}`;
+      summary.append(label, count);
+
+      const list = document.createElement("div");
+      list.className = "citation-chip-list";
+      citations.forEach(citation => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "citation-chip";
+        button.textContent = citationChipLabel(citation);
+        button.title = citation.document || citation.id;
+        button.addEventListener("click", () => openCitation(citation));
+        list.appendChild(button);
+      });
+      details.append(summary, list);
+      return details;
+    }
+
+    function wireCitationButtons(container, citations) {
+      const byId = new Map(citations.map(citation => [citation.id, citation]));
+      container.querySelectorAll("[data-citation-id]").forEach(button => {
+        const citation = byId.get(button.dataset.citationId);
+        if (citation) button.addEventListener("click", () => openCitation(citation));
+      });
+    }
+
+    function sourceMetaRow(label, value) {
+      const row = document.createElement("div");
+      const name = document.createElement("strong");
+      name.textContent = `${label}: `;
+      row.append(name, document.createTextNode(value));
+      return row;
+    }
+
+    function safeHttpUrl(value) {
+      try {
+        const parsed = new URL(String(value || ""), window.location.href);
+        return ["http:", "https:"].includes(parsed.protocol) ? parsed.href : "";
+      } catch {
+        return "";
+      }
+    }
+
+    function openCitation(citation) {
+      sourceDialogKicker.textContent = `${citation.id} · Legal source`;
+      sourceDialogTitle.textContent = citation.document || "Source document";
+      sourceDialogMeta.replaceChildren();
+      if (citation.section) sourceDialogMeta.appendChild(sourceMetaRow("Section", citation.section));
+      if (citation.legal_citation) sourceDialogMeta.appendChild(sourceMetaRow("Citation", citation.legal_citation));
+      if (citation.namespace) sourceDialogMeta.appendChild(sourceMetaRow("Collection", citation.namespace));
+      sourceDialogExcerpt.textContent = citation.excerpt || "The retrieved passage is unavailable.";
+
+      const sourceUrl = safeHttpUrl(citation.source_url);
+      sourceDialogLink.hidden = !sourceUrl;
+      if (sourceUrl) sourceDialogLink.href = sourceUrl;
+      else sourceDialogLink.removeAttribute("href");
+
+      if (sourceDialog.open) sourceDialog.close();
+      sourceDialog.showModal();
+      sourceDialogClose.focus();
+    }
+
+    function extractCitationsFromSteps(steps) {
+      const documentationSteps = (Array.isArray(steps) ? steps : [])
+        .filter(step => step && step.module === "DocumentationAgent");
+      const evidenceStep = documentationSteps.find(step =>
+        typeof step?.prompt?.user_prompt === "string"
+        && step.prompt.user_prompt.includes("Retrieved evidence:\n"));
+      const assessmentStep = [...documentationSteps].reverse().find(step =>
+        step?.response && Array.isArray(step.response.entitlements));
+      if (!evidenceStep || !assessmentStep) return [];
+
+      const references = new Map();
+      assessmentStep.response.entitlements.forEach(entitlement => {
+        const source = String(entitlement?.source || "");
+        const matches = [...source.matchAll(/\[(S\d+)\]\s*/g)];
+        matches.forEach((match, index) => {
+          const end = matches[index + 1]?.index ?? source.length;
+          const label = source.slice(match.index + match[0].length, end).replace(/^[\s;,]+|[\s;,\[\]]+$/g, "");
+          const values = references.get(match[1]) || [];
+          if (label && !values.includes(label)) values.push(label);
+          references.set(match[1], values);
+        });
+      });
+      if (!references.size) return [];
+
+      const evidence = evidenceStep.prompt.user_prompt.split("Retrieved evidence:\n", 2)[1];
+      const pattern = /(?:^|\n)\[(S\d+)\]\s+([^\r\n]+)\r?\n([\s\S]*?)\r?\nExcerpt:\r?\n([\s\S]*?)(?=\r?\n\r?\n\[S\d+\]|\r?\n\r?\nWrite the grounded draft\.|(?![\s\S]))/g;
+      const fieldNames = {
+        "Namespace": "namespace",
+        "Document type": "document_type",
+        "Section": "section",
+        "Provision ID": "provision_id",
+        "Legal citation": "legal_citation",
+        "Official source": "source_url",
+      };
+      const citations = [];
+      for (const match of evidence.matchAll(pattern)) {
+        const id = match[1];
+        if (!references.has(id)) continue;
+        const fields = {};
+        match[3].split(/\r?\n/).forEach(line => {
+          const separator = line.indexOf(":");
+          if (separator < 0) return;
+          const key = fieldNames[line.slice(0, separator).trim()];
+          if (key) fields[key] = line.slice(separator + 1).trim();
+        });
+        citations.push({
+          id,
+          source_key: `${fields.namespace || "source"}:${fields.provision_id || id}`,
+          document: match[2].trim(),
+          namespace: fields.namespace || "",
+          document_type: fields.document_type || "",
+          section: fields.section || "",
+          provision_id: fields.provision_id || "",
+          legal_citation: fields.legal_citation || "",
+          source_url: fields.source_url || "",
+          excerpt: match[4].trim(),
+          references: references.get(id),
+        });
+      }
+      return citations;
     }
 
     function traceElement(steps) {
@@ -1149,8 +1433,15 @@
         const target = conversations.find(item => item.id === conversationId);
         if (!target) return;
 
+        const citations = extractCitationsFromSteps(data.steps || []);
         target.messages.push(data.status === "ok"
-          ? { role: "assistant", content: data.response || "I could not produce a response.", steps: data.steps || [], createdAt: new Date().toISOString() }
+          ? {
+              role: "assistant",
+              content: data.response || "I could not produce a response.",
+              steps: data.steps || [],
+              citations,
+              createdAt: new Date().toISOString(),
+            }
           : { role: "assistant", content: data.error || "Something went wrong. Please try again.", error: true, createdAt: new Date().toISOString() });
         target.updatedAt = new Date().toISOString();
         persistConversations();
@@ -1184,6 +1475,10 @@
       pendingDeleteId = null;
     });
     confirmDeleteButton.addEventListener("click", confirmDeleteConversation);
+    sourceDialogClose.addEventListener("click", () => sourceDialog.close());
+    sourceDialog.addEventListener("click", event => {
+      if (event.target === sourceDialog) sourceDialog.close();
+    });
     deleteDialog.addEventListener("click", event => {
       if (event.target === deleteDialog) {
         deleteDialog.close();

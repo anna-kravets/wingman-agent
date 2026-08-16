@@ -20,11 +20,14 @@ MODULE = "FlightAgent"
 
 MIN_FOR_CHOICE = 3            # fewer than this and the passenger has no real choice
 NEAR_DEPARTURE_MINUTES = 90   # below this, they may not make the gate
+MAX_COMPLETION_TOKENS = 10_000
 
 SYSTEM_PROMPT = """You choose onward flights for a passenger whose flight has just been disrupted.
 
-You are given a list of REAL flights, already verified as departing from the passenger's airport to
-their destination and as still catchable. Choose only from that list.
+You are given a list of REAL scheduled flights, verified as departing from the passenger's airport
+to their destination after the current time. Choose only from that list. A very near departure is
+not necessarily catchable: the passenger still needs the airline to confirm seats and complete the
+rebooking, so prefer a realistically actionable option over one that is about to close.
 
 You do not copy the flight's details. Give the flight number exactly as it appears in the candidate
 so it can be matched, and everything factual - times, terminal, aircraft, airline - is filled in
@@ -36,6 +39,10 @@ rebooked on a competitor, so do not silently drop them. Never name a booking or 
 
 Return at most three options, best first. Prefer the earliest arrival that meets any deadline given;
 where they differ meaningfully, include one that is gentler on conditions.
+
+Do not ask whether everyone in the stated party still intends to travel together unless the
+passenger has actually suggested splitting the party. Never tell the passenger to "proceed with"
+an internal option id such as F1; describe the real flight instead.
 
 You have schedule data ONLY. You do not know fares, seat availability, baggage allowances, or what
 the airline owes this passenger. Never state a price, and never state a baggage or compensation
@@ -101,6 +108,33 @@ def _normalise(text) -> str:
     return re.sub(r"\s+", "", str(text or "")).upper()
 
 
+def _original_iata(request: dict) -> str:
+    """Best available carrier code for the disrupted flight.
+
+    Intake usually returns a human airline name ("Lufthansa"), while schedule data
+    carries IATA ("LH"). The flight number is the reliable bridge between them.
+    """
+    flight_number = _normalise(request.get("flight_number"))
+    match = re.match(r"^([A-Z0-9]{2})(?=\d)", flight_number)
+    if match:
+        return match.group(1)
+    airline = _normalise(request.get("airline"))
+    return airline if len(airline) in (2, 3) else ""
+
+
+def _minutes_until(request: dict, option: dict) -> int:
+    """Minutes from the passenger's local clock to an option's departure."""
+    now = datetime.fromisoformat(request["local_now"])
+    departs = datetime.fromisoformat(option["depart"])
+    # local_now deliberately has no offset; AeroDataBox's departure does. Both
+    # describe the origin airport's local clock, so compare their wall times.
+    if departs.tzinfo is not None and now.tzinfo is None:
+        departs = departs.replace(tzinfo=None)
+    elif departs.tzinfo is None and now.tzinfo is not None:
+        now = now.replace(tzinfo=None)
+    return round((departs - now).total_seconds() / 60)
+
+
 def _match(option: dict, candidates: list[dict]) -> dict | None:
     wanted = _normalise(option.get("flight_number"))
     return next((c for c in candidates if _normalise(c.get("flight")) == wanted), None)
@@ -146,19 +180,20 @@ def _caveats(request: dict, options: list[dict], candidates: list[dict]) -> list
         said.append(f"NOTE: only {len(candidates)} flight(s) were found on this route in the "
                     f"next 48 hours, so there is little to choose between.")
 
-    original = _normalise(request.get("airline"))
+    original = _original_iata(request)
     if original and all(_normalise(o.get("airline_iata")) != original for o in options):
         said.append("NOTE: every option is on a different airline from the one that cancelled, "
                     "so the ticket may need endorsing over - your Contract of Carriage covers "
                     "whether that's automatic.")
 
-    now = datetime.fromisoformat(request["local_now"])
     for option in options:
-        departs = datetime.fromisoformat(option["depart"]).replace(tzinfo=None)
-        minutes = round((departs - now).total_seconds() / 60)
+        minutes = _minutes_until(request, option)
         if 0 <= minutes <= NEAR_DEPARTURE_MINUTES:
-            said.append(f"CONFIRM: {option['flight_number']} leaves in about {minutes} minutes - "
-                        f"check you can reach the gate in time.")
+            said.append(
+                f"CONFIRM: {option['flight_number']} leaves in about {minutes} minutes. "
+                "Treat it as an urgent possibility, not a reliable replacement, until the "
+                "airline confirms seats, completes the rebooking, and says you can still board."
+            )
             break
 
     if any(o.get("arrives_next_day") for o in options):
@@ -195,7 +230,25 @@ def _validate(payload: dict, request: dict, candidates: list[dict]) -> dict:
     if payload.get("recommended_id") not in {o["id"] for o in usable}:
         payload["recommended_id"] = usable[0]["id"]
 
+    # The model naturally gravitates to the earliest timestamp. That is unsafe when
+    # the flight leaves before a disrupted passenger can reasonably be rebooked and
+    # reach the gate. Keep the urgent flight visible, but base the recovery plan (and
+    # therefore the hotel nights) on the first option outside the risk window.
+    recommended = next(o for o in usable if o["id"] == payload["recommended_id"])
+    if _minutes_until(request, recommended) <= NEAR_DEPARTURE_MINUTES:
+        actionable = [o for o in usable
+                      if _minutes_until(request, o) > NEAR_DEPARTURE_MINUTES]
+        if actionable:
+            actionable.sort(key=lambda o: o["depart"])
+            payload["recommended_id"] = actionable[0]["id"]
+
     model_caveats = [str(c) for c in (payload.get("caveats") or []) if str(c).strip()]
+    # These two recurrent model inventions add no passenger information and can be
+    # actively harmful. Party size does not imply a plan to split, and internal ids
+    # are meaningless outside the trace.
+    model_caveats = [c for c in model_caveats
+                     if not ("travel together" in c.lower() and "confirm" in c.lower())
+                     and not re.search(r"\bproceed with f\d+\b", c, re.IGNORECASE)]
     payload["options"] = usable
     payload["caveats"] = _caveats(request, usable, candidates) + model_caveats
     return payload
@@ -225,7 +278,8 @@ def run(request: dict, history: list[dict]) -> tuple[dict, list[dict]]:
         raise llm.LLMError(f"{MODULE}: {NO_LIVE_DATA}", steps=[], passenger_message=NO_LIVE_DATA)
 
     payload, step = llm.call(
-        MODULE, SYSTEM_PROMPT, _user_prompt(request, history, candidates), expect_json=True
+        MODULE, SYSTEM_PROMPT, _user_prompt(request, history, candidates), expect_json=True,
+        max_completion_tokens=MAX_COMPLETION_TOKENS,
     )
     try:
         return _validate(payload, request, candidates), [step]

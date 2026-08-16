@@ -65,6 +65,21 @@ def test_one_llm_call_produces_exactly_one_step(monkeypatch):
     assert steps[0]["module"] == "FlightAgent"
 
 
+def test_flight_completion_guard_uses_the_project_10k_ceiling(monkeypatch):
+    seen = []
+    monkeypatch.setattr(flights, "search", lambda *a, **k: [CANDIDATE])
+
+    def capture(module, system_prompt, user_prompt, **kwargs):
+        seen.append(kwargs.get("max_completion_tokens"))
+        payload = good_payload()
+        return payload, make_step(module, system_prompt, user_prompt, payload)
+
+    monkeypatch.setattr(llm, "call", capture)
+    flight_agent.run(REQUEST, [])
+
+    assert seen == [10_000]
+
+
 def test_history_reaches_the_prompt(monkeypatch):
     monkeypatch.setattr(flights, "search", lambda *a, **k: [CANDIDATE])
     monkeypatch.setattr(llm, "call", fake_call(good_payload()))
@@ -183,6 +198,21 @@ def test_a_different_carrier_is_flagged(monkeypatch):
     assert any("different airline" in c for c in caveats)
 
 
+def test_airline_name_is_matched_to_the_cancelled_flights_iata_code(monkeypatch):
+    """The live intake returns "Lufthansa", while candidates carry "LH".
+
+    Comparing those strings directly produced the false claim that every option was
+    on a different airline even when LH 687 was one of them.
+    """
+    request = dict(REQUEST, airline="Lufthansa")
+    monkeypatch.setattr(flights, "search", lambda *a, **k: [CANDIDATE])
+    monkeypatch.setattr(llm, "call", fake_call(good_payload()))
+
+    caveats = flight_agent.run(request, [])[0]["caveats"]
+
+    assert not any("different airline" in c for c in caveats)
+
+
 def test_a_departure_the_passenger_may_miss_asks_for_confirmation(monkeypatch):
     # local_now is 22:15; a 23:00 departure leaves 45 minutes.
     soon = dict(CANDIDATE, flight="LH 1",
@@ -192,6 +222,29 @@ def test_a_departure_the_passenger_may_miss_asks_for_confirmation(monkeypatch):
                        good_payload(flight_number="LH 1"))[0]["caveats"]
 
     assert any(c.startswith("CONFIRM:") and "minutes" in c for c in caveats)
+
+
+def test_a_near_departure_is_not_recommended_over_a_realistic_later_option(monkeypatch):
+    """A schedule in 30 minutes is a possibility, not a safe recovery plan."""
+    soon = dict(CANDIDATE, flight="LH 1",
+                depart="2026-08-09T22:45:00+03:00",
+                arrive="2026-08-10T01:45:00+02:00")
+    later = dict(CANDIDATE, flight="LH 2",
+                 depart="2026-08-10T06:00:00+03:00",
+                 arrive="2026-08-10T09:00:00+02:00")
+    payload = {
+        "options": [
+            {"id": "F1", "flight_number": "LH 1", "rebooking": "", "notes": "Earliest."},
+            {"id": "F2", "flight_number": "LH 2", "rebooking": "", "notes": "Later."},
+        ],
+        "recommended_id": "F1",
+        "caveats": [],
+    }
+
+    result, _ = run_with(monkeypatch, [soon, later], payload)
+
+    assert result["recommended_id"] == "F2"
+    assert any("urgent possibility" in c.lower() for c in result["caveats"])
 
 
 def test_a_delayed_option_is_flagged(monkeypatch):

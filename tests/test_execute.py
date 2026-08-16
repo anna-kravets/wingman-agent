@@ -212,6 +212,21 @@ def test_the_agents_results_are_stored_on_the_turn(monkeypatch):
     assert store["c1"][-1]["results"] == {"flight": {"options": []}}
 
 
+def test_stored_citations_are_restored_with_the_assistant_message():
+    citation = {
+        "id": "S3",
+        "document": "Aviation Services Law",
+        "excerpt": "A passenger is entitled to reimbursement.",
+    }
+    messages = conversation._messages([{
+        "prompt": "Can I get a refund?",
+        "response": "Yes, subject to the cited conditions.",
+        "results": {"citations": [citation]},
+    }])
+
+    assert messages[1]["citations"] == [citation]
+
+
 def test_results_from_one_turn_reach_the_next_turns_prompt(monkeypatch, fake_search_data):
     # test_the_agents_results_are_stored_on_the_turn proves storage with supervisor.run
     # faked out; test_supervisor.py proves prior results reach a prompt with history
@@ -346,6 +361,9 @@ def test_gui_is_served_without_auth():
     assert 'id="conversation-list"' in response.text
     assert 'id="delete-dialog"' in response.text
     assert 'id="confirm-delete"' in response.text
+    assert 'id="source-dialog"' in response.text
+    assert "extractCitationsFromSteps" in response.text
+    assert "Legal sources" in response.text
     assert 'method: "DELETE"' in response.text
     assert "localStorage" in response.text
     assert "No account required" not in response.text

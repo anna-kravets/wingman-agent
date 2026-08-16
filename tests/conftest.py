@@ -39,7 +39,7 @@ def _accommodation_response(user_prompt: str) -> dict:
     return {
         "options": [{
             "id": "H1", "name": "Airport Plaza",
-            "price_estimate": "EUR 120 total (estimate)",
+            "price_estimate": "EUR 100-140 total (estimate)",
             "notes": "Meals not confirmed — check at the desk.",
         }],
         "recommended_id": "H1",

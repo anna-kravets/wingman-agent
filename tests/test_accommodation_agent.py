@@ -136,6 +136,23 @@ def test_kind_appears_only_when_it_is_not_a_hotel(monkeypatch):
     assert option["kind"] == "hostel"
 
 
+def test_multiple_guests_are_not_sent_to_a_hostel_when_a_hotel_is_available(monkeypatch):
+    hostel = dict(CANDIDATE, name="Airport Abel", kind="hostel", distance_km=1.9)
+    hotel = dict(CANDIDATE, name="Shai Lev", distance_km=5.6)
+    payload = {
+        "options": [
+            {"id": "H1", "name": "Airport Abel", "price_estimate": "EUR 35-70 estimate"},
+            {"id": "H2", "name": "Shai Lev", "price_estimate": "EUR 90-150 estimate"},
+        ],
+        "recommended_id": "H1",
+    }
+
+    result, _ = run_with(monkeypatch, [hostel, hotel], payload)
+
+    assert result["recommended_id"] == "H2"
+    assert any("private room" in c.lower() for c in result["caveats"])
+
+
 # --- caveats --------------------------------------------------------------------
 
 
@@ -167,6 +184,42 @@ def test_prices_are_always_flagged_as_estimates(monkeypatch):
     caveats = run_with(monkeypatch, [CANDIDATE], good_payload())[0]["caveats"]
 
     assert any("estimate" in c.lower() for c in caveats)
+    assert any("availability" in c.lower() and "not confirmed" in c.lower()
+               for c in caveats)
+
+
+def test_vague_price_categories_are_repaired_to_numeric_ranges(monkeypatch):
+    vague = good_payload()
+    vague["options"][0]["price_estimate"] = "Roughly mid-range (estimate)"
+    numeric = good_payload()
+    answers = iter((vague, numeric))
+
+    monkeypatch.setattr(hotels, "search", lambda *a, **k: [CANDIDATE])
+
+    def two_calls(module, system_prompt, user_prompt, **kwargs):
+        payload = next(answers)
+        return payload, make_step(module, system_prompt, user_prompt, payload)
+
+    monkeypatch.setattr(llm, "call", two_calls)
+    result, steps = accommodation_agent.run(REQUEST, WINDOW, [])
+
+    assert len(steps) == 2
+    assert "110-140" in result["options"][0]["price_estimate"]
+
+
+def test_accommodation_completion_guards_use_the_project_10k_ceiling(monkeypatch):
+    seen = []
+    monkeypatch.setattr(hotels, "search", lambda *a, **k: [CANDIDATE])
+
+    def capture(module, system_prompt, user_prompt, **kwargs):
+        seen.append(kwargs.get("max_completion_tokens"))
+        payload = good_payload()
+        return payload, make_step(module, system_prompt, user_prompt, payload)
+
+    monkeypatch.setattr(llm, "call", capture)
+    accommodation_agent.run(REQUEST, WINDOW, [])
+
+    assert seen == [10_000]
 
 
 def test_the_model_may_add_its_own_caveats(monkeypatch):
