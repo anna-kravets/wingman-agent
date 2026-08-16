@@ -598,13 +598,13 @@
                 <strong>A useful prompt includes all the facts about your situation</strong>
                 <span class="example-badge">Example</span>
               </div>
-              <blockquote>“Lufthansa flight LH318 from Tel Aviv to Frankfurt was cancelled at the gate today, 18 August. The airline said it was an operational issue. I am travelling with one child, my checked bags are with the airline, and the next flight they offered is tomorrow afternoon. I need a hotel tonight, meals, and the earliest reasonable replacement flight. Please also explain whether I can choose a refund and what compensation may apply.”</blockquote>
+              <blockquote>“Lufthansa flight LH318 from Tel Aviv to Frankfurt was cancelled at the gate today. The airline said it was an operational issue. I am travelling with one child, my checked bags are with the airline, and the next flight they offered is tomorrow afternoon. I need a hotel tonight, meals, and the earliest reasonable replacement flight. Please also explain whether I can choose a refund and what compensation may apply.”</blockquote>
               <div class="prompt-details" aria-label="Important prompt details">
-                <span class="prompt-detail">Airline + flight</span>
-                <span class="prompt-detail">Route + date</span>
-                <span class="prompt-detail">What happened + reason</span>
-                <span class="prompt-detail">Airline’s offer</span>
-                <span class="prompt-detail">Urgent needs</span>
+                <span class="prompt-detail">Airline + flight ·</span>
+                <span class="prompt-detail">Route + date ·</span>
+                <span class="prompt-detail">What happened + reason ·</span>
+                <span class="prompt-detail">Airline’s offer ·</span>
+                <span class="prompt-detail">Urgent needs ·</span>
                 <span class="prompt-detail">Refund + rights question</span>
               </div>
               <div class="example-actions">
@@ -628,7 +628,7 @@
             <textarea id="prompt" rows="1" aria-label="Message Wingman" placeholder="Tell Wingman what happened…"></textarea>
             <button class="send-button" id="run" type="button" aria-label="Send message">↑</button>
           </div>
-          <div class="composer-help">Press Enter to send · Shift + Enter for a new line · Wingman provides guidance, not bookings or legal advice</div>
+          <div class="composer-help">Press Enter to send · Shift + Enter for a new line</div>
         </div>
       </footer>
     </main>
@@ -649,7 +649,7 @@
   <script>
     const STORAGE_KEY = "wingman.conversations.v1";
     const MAX_CONVERSATIONS = 30;
-    const EXAMPLE_PROMPT = "Lufthansa flight LH318 from Tel Aviv to Frankfurt was cancelled at the gate today, 18 August. The airline said it was an operational issue. I am travelling with one child, my checked bags are with the airline, and the next flight they offered is tomorrow afternoon. I need a hotel tonight, meals, and the earliest reasonable replacement flight. Please also explain whether I can choose a refund and what compensation may apply.";
+    const EXAMPLE_PROMPT = "Lufthansa flight LH318 from Tel Aviv to Frankfurt was cancelled at the gate today. The airline said it was an operational issue. I am travelling with one child, my checked bags are with the airline, and the next flight they offered is tomorrow afternoon. I need a hotel tonight, meals, and the earliest reasonable replacement flight. Please also explain whether I can choose a refund and what compensation may apply.";
 
     const historyEl = document.getElementById("history");
     const promptEl = document.getElementById("prompt");
