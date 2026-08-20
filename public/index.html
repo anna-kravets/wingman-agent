@@ -374,13 +374,26 @@
 
     .bubble p { margin: 0 0 10px; }
     .bubble p:last-child { margin-bottom: 0; }
+    .bubble h1, .bubble h2, .bubble h3, .bubble h4, .bubble h5, .bubble h6 { margin: 14px 0 8px; line-height: 1.3; font-weight: 700; }
+    .bubble h1:first-child, .bubble h2:first-child, .bubble h3:first-child,
+    .bubble h4:first-child, .bubble h5:first-child, .bubble h6:first-child { margin-top: 0; }
+    .bubble h1 { font-size: 19px; }
+    .bubble h2 { font-size: 17px; }
+    .bubble h3 { font-size: 15.5px; }
+    .bubble h4, .bubble h5, .bubble h6 { font-size: 14.5px; }
     .bubble ul, .bubble ol { margin: 0 0 10px; padding-left: 22px; }
     .bubble ul:last-child, .bubble ol:last-child { margin-bottom: 0; }
     .bubble li { margin: 2px 0; }
+    .bubble li ul, .bubble li ol { margin: 2px 0 2px 0; }
     .bubble code { background: rgba(23,32,30,.07); border-radius: 4px; padding: .1em .35em; font-family: var(--mono); font-size: 12.5px; }
     .bubble pre.md-code { margin: 0 0 10px; border-radius: 10px; background: rgba(23,32,30,.06); padding: 12px 14px; overflow-x: auto; }
     .bubble pre.md-code:last-child { margin-bottom: 0; }
     .bubble pre.md-code code { background: none; padding: 0; }
+    .bubble .md-table-wrap { margin: 0 0 10px; overflow-x: auto; }
+    .bubble .md-table-wrap:last-child { margin-bottom: 0; }
+    .bubble table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+    .bubble th, .bubble td { padding: 7px 10px; border: 1px solid var(--line); text-align: left; vertical-align: top; }
+    .bubble th { background: rgba(23,32,30,.06); font-weight: 700; }
     .bubble a { color: #47703c; text-decoration: underline; text-underline-offset: 2px; }
     .citation-link {
       display: inline;
@@ -422,6 +435,8 @@
     .user .bubble { border-radius: var(--radius-md) 5px var(--radius-md) var(--radius-md); background: var(--user); padding: 13px 17px; color: #f7faf6; font-size: 14px; line-height: 1.65; }
     .user .bubble code { background: rgba(255,255,255,.16); }
     .user .bubble pre.md-code { background: rgba(255,255,255,.12); }
+    .user .bubble th, .user .bubble td { border-color: rgba(255,255,255,.22); }
+    .user .bubble th { background: rgba(255,255,255,.12); }
     .user .bubble a { color: var(--accent); }
     .message.error .bubble { border-left: 2px solid #cf9a94; padding-left: 13px; color: #8f342f; }
 
@@ -937,15 +952,90 @@
       if (codeBlockMatch) return `<pre class="md-code"><code>${codeBlocks[Number(codeBlockMatch[1])]}</code></pre>`;
 
       const lines = trimmed.split("\n");
-      const isBulletList = lines.every(line => /^[-*]\s+/.test(line));
-      const isNumberedList = lines.every(line => /^\d+\.\s+/.test(line));
-      if (isBulletList || isNumberedList) {
-        const tag = isBulletList ? "ul" : "ol";
-        const items = lines.map(line => `<li>${renderInlineMarkdown(line.replace(/^(?:[-*]|\d+\.)\s+/, ""), citations)}</li>`).join("");
-        return `<${tag}>${items}</${tag}>`;
+
+      const headingMatch = lines[0].match(/^(#{1,6})\s+(.+)$/);
+      if (headingMatch) {
+        const level = headingMatch[1].length;
+        const heading = `<h${level}>${renderInlineMarkdown(headingMatch[2].trim(), citations)}</h${level}>`;
+        const rest = lines.slice(1).join("\n").trim();
+        return heading + (rest ? renderMarkdownBlock(rest, codeBlocks, citations) : "");
+      }
+
+      const listStart = lines.findIndex(line => /^(?:[-*]|\d+\.)\s+/.test(line));
+      if (listStart === 0) {
+        return renderMarkdownList(parseListLines(lines), citations);
+      }
+      if (listStart > 0) {
+        const lead = lines.slice(0, listStart).join("\n");
+        const rest = lines.slice(listStart).join("\n");
+        return `<p>${renderInlineMarkdown(lead, citations).replace(/\n/g, "<br>")}</p>`
+          + renderMarkdownBlock(rest, codeBlocks, citations);
+      }
+
+      if (lines.length >= 2 && lines[0].includes("|") && isTableSeparator(lines[1])) {
+        return renderMarkdownTable(lines, citations);
       }
 
       return `<p>${renderInlineMarkdown(trimmed, citations).replace(/\n/g, "<br>")}</p>`;
+    }
+
+    function parseListLines(lines) {
+      const root = [];
+      const stack = [];
+      for (const raw of lines) {
+        const match = raw.match(/^(\s*)([-*]|\d+\.)\s+(.*)$/);
+        if (match) {
+          const indent = match[1].length;
+          const node = { ordered: /\d/.test(match[2]), content: [match[3]], children: [] };
+          while (stack.length && stack[stack.length - 1].indent >= indent) stack.pop();
+          (stack.length ? stack[stack.length - 1].node.children : root).push(node);
+          stack.push({ indent, node });
+        } else if (stack.length) {
+          stack[stack.length - 1].node.content.push(raw.trim());
+        }
+      }
+      return root;
+    }
+
+    function renderMarkdownList(nodes, citations) {
+      if (!nodes.length) return "";
+      const tag = nodes[0].ordered ? "ol" : "ul";
+      const items = nodes.map(node => {
+        const text = node.content.map(line => renderInlineMarkdown(line, citations)).join("<br>");
+        return `<li>${text}${renderMarkdownList(node.children, citations)}</li>`;
+      }).join("");
+      return `<${tag}>${items}</${tag}>`;
+    }
+
+    function splitTableRow(line) {
+      const trimmed = line.trim().replace(/^\|/, "").replace(/\|$/, "");
+      const cells = [];
+      let current = "";
+      for (let i = 0; i < trimmed.length; i++) {
+        if (trimmed[i] === "\\" && trimmed[i + 1] === "|") {
+          current += "|";
+          i++;
+        } else if (trimmed[i] === "|") {
+          cells.push(current.trim());
+          current = "";
+        } else {
+          current += trimmed[i];
+        }
+      }
+      cells.push(current.trim());
+      return cells;
+    }
+
+    function isTableSeparator(line) {
+      return line.includes("-") && splitTableRow(line).every(cell => /^:?-{1,}:?$/.test(cell));
+    }
+
+    function renderMarkdownTable(lines, citations) {
+      const head = splitTableRow(lines[0]).map(cell => `<th>${renderInlineMarkdown(cell, citations)}</th>`).join("");
+      const body = lines.slice(2).map(line =>
+        `<tr>${splitTableRow(line).map(cell => `<td>${renderInlineMarkdown(cell, citations)}</td>`).join("")}</tr>`
+      ).join("");
+      return `<div class="md-table-wrap"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
     }
 
     function citationAliases(citations) {
@@ -994,6 +1084,7 @@
 
       result = linkifyCitations(result, citations);
       result = result
+        .replace(/~~([^~]+?)~~/g, (_, s) => `<del>${s}</del>`)
         .replace(/\*\*([^*]+?)\*\*|__([^_]+?)__/g, (_, a, b) => `<strong>${a || b}</strong>`)
         .replace(/\*([^*]+?)\*|(?<![A-Za-z0-9])_([^_]+?)_(?![A-Za-z0-9])/g, (_, a, b) => `<em>${a || b}</em>`)
         .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
