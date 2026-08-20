@@ -673,6 +673,18 @@ def test_assumptions_reach_the_composing_call():
     assert "They said X, but Y." in prompt
 
 
+def test_stranded_at_reaches_the_composing_call():
+    """The bug this pins: a passenger stuck at TLV with a flight on to JFK got told
+    about sleep options at JFK, because the composer saw "Route: TLV -> JFK" and
+    nothing telling it which end of that route the passenger is actually stuck at.
+    """
+    request = {"origin": "TLV", "destination": "JFK", "stranded_at": "TLV",
+               "local_now": "2026-08-15T22:15:00"}
+    prompt = supervisor._compose_prompt(request, "digest", [])
+
+    assert "Stranded at: TLV" in prompt
+
+
 def test_the_composing_prompt_never_names_the_inside_of_the_system():
     _, steps, _ = supervisor.run(COMPLETE, [])
     compose = [s for s in steps if s["module"] == "Supervisor"][-1]["prompt"]
@@ -789,10 +801,46 @@ def test_the_results_come_back_with_the_plan():
     assert results["flight"]["recommended_id"] == "F1"
 
 
-def test_a_gated_turn_returns_no_results():
+def test_a_gated_turn_returns_no_findings():
     _, _, results = supervisor.run("my flight got cancelled help", [])
 
-    assert results == {}
+    # No agent ran, so no flight/stay/rights findings - only the resume marker that
+    # lets the next turn recover the needs this gate never got to dispatch.
+    assert set(results) <= {"_pending_needs"}
+    assert results["_pending_needs"] == ["flight", "stay", "rights"]
+
+
+def test_resolving_a_gate_resumes_every_need_the_gated_message_asked_for():
+    """The bug: a passenger asks for flight + stay + rights in one message, the gate
+    fires on a missing detail, and the follow-up that supplies just that detail reads
+    as narrowly about the flight only - silently dropping stay and rights, which never
+    get dispatched on any later turn. `_pending_needs` carries the original ask across
+    the gate so answering it resumes the whole plan, not just the blocked piece.
+    """
+    history = [{"prompt": "my flight got cancelled help",
+                "response": "Before I can help, I need a couple of details:",
+                "results": {"_pending_needs": ["flight", "stay", "rights"]}}]
+
+    # No word here matches the fake's follow-up keyword lists (FOLLOW_UP_WORDS in
+    # conftest.py) for any of flight/stay/rights - on its own this message would
+    # narrow "needs" to [].
+    _, steps, _ = supervisor.run("LH318 TLV -> FRA, terminal 3", history)
+
+    assert set(modules_of(steps)) == MODULES
+
+
+def test_pending_needs_reads_only_the_immediately_preceding_turn():
+    assert supervisor._pending_needs([]) == []
+    assert supervisor._pending_needs([{"prompt": "p", "response": "r"}]) == []
+    assert supervisor._pending_needs(
+        [{"prompt": "p", "response": "r", "results": {"_pending_needs": ["stay", "rights"]}}]
+    ) == ["stay", "rights"]
+    # A turn that actually dispatched carries no pending needs, whatever an earlier
+    # gated turn left behind - only the immediately preceding turn is consulted.
+    assert supervisor._pending_needs([
+        {"prompt": "p1", "response": "r1", "results": {"_pending_needs": ["stay", "rights"]}},
+        {"prompt": "p2", "response": "r2", "results": {"flight": {"options": []}}},
+    ]) == []
 
 
 def test_a_failed_agent_leaves_its_key_out(monkeypatch):

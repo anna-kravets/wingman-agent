@@ -560,6 +560,20 @@ def _request_from(parsed: dict, follow_up: bool, local_now: str) -> dict:
     return request
 
 
+def _pending_needs(history: list[dict]) -> list[str]:
+    """Needs still outstanding from the immediately preceding turn, if it was gated
+    (missing fields / a blocking conflict) before anything could be dispatched.
+
+    Without this, answering a gate's clarifying question reads as a narrow follow-up
+    about only that one field, and whatever else the original message asked for
+    (never dispatched, since the gate fired first) silently falls off the plan.
+    """
+    if not history:
+        return []
+    pending = (history[-1].get("results") or {}).get("_pending_needs")
+    return [n for n in pending if n in NEEDS] if isinstance(pending, list) else []
+
+
 def _extract_request(prompt: str, history: list[dict], local_now: str) -> tuple[dict, dict]:
     """Question refinement: message -> (request, step).
 
@@ -578,6 +592,10 @@ def _extract_request(prompt: str, history: list[dict], local_now: str) -> tuple[
             f"{MODULE}: the refinement pass returned {type(parsed).__name__}, not an object",
             steps=[step],
         )
+    pending = _pending_needs(history)
+    if pending:
+        carried = parsed.get("needs")
+        parsed["needs"] = list(dict.fromkeys((carried if isinstance(carried, list) else []) + pending))
     return _request_from(parsed, bool(history), local_now), step
 
 
@@ -722,6 +740,7 @@ def _compose_prompt(request: dict, digest: str, history: list[dict]) -> str:
     lines = [
         f"Flight: {request.get('airline')} {request.get('flight_number')}",
         f"Route: {request.get('origin')} -> {request.get('destination')}",
+        f"Stranded at: {request.get('stranded_at')}",
         f"What happened: {request.get('disruption')}",
         f"Party size: {request.get('party_size')}",
         f"Local time now: {request.get('local_now')}",
@@ -1087,7 +1106,7 @@ def run(prompt: str, history: list[dict], *,
         ))
         opener = ("Before I can help, I need to check a couple of things:" if blocking
                   else "Before I can help, I need a couple of details:")
-        return opener + "\n" + "\n".join(f"  - {q}" for q in asked), steps, {}
+        return opener + "\n" + "\n".join(f"  - {q}" for q in asked), steps, {"_pending_needs": needs}
 
     results: dict = {}
     failures: list[str] = []
