@@ -14,6 +14,8 @@ env/
 # Vercel
 .vercel/
 
+.troubleshooting/
+
 # Secrets / env
 .env
 .env.local

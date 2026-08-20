@@ -813,16 +813,29 @@ def _money_requirements(value: str) -> list[tuple[str, tuple[str, ...]]]:
 
 
 def _citation_requirements(source: str) -> list[tuple[str, tuple[str, ...]]]:
-    """Section/article references, with plain-language aliases."""
+    """Section/article references, with plain-language aliases.
+
+    Keyed by the base article/section number, not the exact subsection. Two
+    entitlements citing the same article's different subsections (Art. 8(1)(a)-(c)
+    vs Art. 8(1)(a)) must not become two hard requirements no single plain-language
+    sentence can satisfy at once - naming "Article 8" is what the compose prompt's
+    own "no regulation-speak" instruction asks for, and still forces the right law
+    to be named.
+    """
     requirements = []
-    pattern = r"\b(s\.|Art\.)\s*([0-9]+(?:\([a-zA-Z0-9]+\))*(?:-[0-9()a-zA-Z]+)?)"
-    for prefix, reference in re.findall(pattern, source or "", re.IGNORECASE):
+    seen = set()
+    pattern = r"\b(s\.|Art\.)\s*([0-9]+)"
+    for prefix, base in re.findall(pattern, source or "", re.IGNORECASE):
+        key = (prefix.lower()[0], base)
+        if key in seen:
+            continue
+        seen.add(key)
         if prefix.lower().startswith("s"):
-            aliases = (f"s. {reference}", f"s.{reference}", f"section {reference}")
-            label = f"section {reference} citation"
+            aliases = (f"s. {base}", f"s.{base}", f"section {base}")
+            label = f"section {base} citation"
         else:
-            aliases = (f"Art. {reference}", f"Art.{reference}", f"Article {reference}")
-            label = f"Article {reference} citation"
+            aliases = (f"Art. {base}", f"Art.{base}", f"Article {base}")
+            label = f"Article {base} citation"
         requirements.append((label, aliases))
     return requirements
 
