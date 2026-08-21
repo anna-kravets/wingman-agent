@@ -986,7 +986,8 @@
         const match = raw.match(/^(\s*)([-*]|\d+\.)\s+(.*)$/);
         if (match) {
           const indent = match[1].length;
-          const node = { ordered: /\d/.test(match[2]), content: [match[3]], children: [] };
+          const ordered = /\d/.test(match[2]);
+          const node = { ordered, start: ordered ? parseInt(match[2], 10) : 1, content: [match[3]], children: [] };
           while (stack.length && stack[stack.length - 1].indent >= indent) stack.pop();
           (stack.length ? stack[stack.length - 1].node.children : root).push(node);
           stack.push({ indent, node });
@@ -1000,11 +1001,14 @@
     function renderMarkdownList(nodes, citations) {
       if (!nodes.length) return "";
       const tag = nodes[0].ordered ? "ol" : "ul";
+      // A blank line between items splits the list across blocks, so each <ol> has
+      // to say where it resumes or every item renders as "1.".
+      const start = nodes[0].ordered && nodes[0].start !== 1 ? ` start="${nodes[0].start}"` : "";
       const items = nodes.map(node => {
         const text = node.content.map(line => renderInlineMarkdown(line, citations)).join("<br>");
         return `<li>${text}${renderMarkdownList(node.children, citations)}</li>`;
       }).join("");
-      return `<${tag}>${items}</${tag}>`;
+      return `<${tag}${start}>${items}</${tag}>`;
     }
 
     function splitTableRow(line) {
