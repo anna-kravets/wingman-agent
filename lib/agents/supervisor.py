@@ -793,7 +793,11 @@ def _digest(results: dict, failures: list[str]) -> str:
     return "\n".join(lines)
 
 
-REQUIRED_HEADING = "Must appear in your answer word for word:"
+# Phrased as an instruction about the passenger's experience, not as a block of content.
+# A bare delimited list reads to the model as text to emit, and gpt-5.4-mini duly
+# pasted it into the answer, separators included.
+REQUIRED_HEADING = ("Somewhere in your answer the passenger has to see each of these "
+                    "exact words and figures:")
 
 # Document names the guard insists on seeing spelled out.
 SOURCE_DOCUMENTS = ("Aviation Services Law", "Conditions of Carriage",
@@ -861,8 +865,10 @@ def _compose_prompt(request: dict, digest: str, history: list[dict],
     required = _required_tokens(results)
     if required:
         lines += ["", REQUIRED_HEADING,
-                  "  " + " | ".join(required),
-                  "Weave them into your sentences. Do not list them."]
+                  "  " + ", ".join(required),
+                  "That is a checklist for you, not text for them. Never reproduce it - "
+                  "not as a list, not as a run of words, not in bold. Every item belongs "
+                  "inside an ordinary sentence, in the place it naturally goes."]
     return "\n".join(lines)
 
 
