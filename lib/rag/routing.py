@@ -51,11 +51,14 @@ US_AIRPORTS = {
     "MIA", "MSP", "ORD", "PDX", "PHL", "PHX", "SAN", "SEA", "SFO",
     "SJC", "SLC", "TPA",
 }
+# Switzerland is not in the EEA but applies EU261 under its air-transport
+# agreement with the EU, so its airports belong here. The UK does not: since
+# Brexit it has its own UK261, and the corpus has no namespace for it.
 EU_EEA_AIRPORTS = {
-    "AMS", "ARN", "ATH", "BCN", "BER", "BRU", "BUD", "CDG", "CPH",
-    "DUB", "DUS", "FCO", "FRA", "HEL", "KEF", "LIS", "MAD", "MUC",
-    "MXP", "NAP", "NCE", "OSL", "ORY", "OTP", "PRG", "RIX", "SOF",
-    "STR", "TLL", "VIE", "VNO", "WAW", "ZAG",
+    "AMS", "ARN", "ATH", "BCN", "BER", "BRU", "BSL", "BUD", "CDG",
+    "CPH", "DUB", "DUS", "FCO", "FRA", "GVA", "HEL", "KEF", "LIS",
+    "MAD", "MUC", "MXP", "NAP", "NCE", "OSL", "ORY", "OTP", "PRG",
+    "RIX", "SOF", "STR", "TLL", "VIE", "VNO", "WAW", "ZAG", "ZRH",
 }
 EU_EEA_CARRIERS = {"AF", "AL", "FR", "LH", "RR"}
 RIGHTS_NAMESPACES = ("rights-eu", "rights-us", "rights-il")
