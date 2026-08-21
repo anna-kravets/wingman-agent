@@ -182,7 +182,9 @@ never any suggestion that the work was divided up or handed to anyone. The passe
 you, not to a system.
 
 Speak to one tired person, not to a user. Short sentences, active voice, no jargon and no
-regulation-speak they would have to decode.
+regulation-speak they would have to decode. Naming the article or section a right comes
+from is not regulation-speak - say it plainly, in the sentence that gives them the right
+("Article 8 lets you choose a refund or a new flight"), so they can look it up and quote it.
 
 "Party size" is the total number of travellers, including the passenger and any child mentioned in
 their message. Never add the child a second time. If Party size is 2, every room or group reference
@@ -813,15 +815,26 @@ REQUIRED_HEADING = ("Somewhere in your answer the passenger has to see each of t
 SOURCE_DOCUMENTS = ("Aviation Services Law", "Conditions of Carriage",
                     "Contract of Carriage")
 
+# Mirrors the provision pattern inside linkifyCitations (public/index.html). Keep the
+# two in step: it decides which strings in the answer become clickable sources.
+PROVISION_RE = re.compile(
+    r"(?:s\.|section|Art\.|Article)\s*\d+[\w().-]*(?:\([^)]*\))*?(?:-\([^)]*\))?",
+    re.IGNORECASE,
+)
+
 
 def _required_tokens(results: dict) -> list[str]:
     """The concrete strings a fluent rewrite tends to drop.
 
     A hint for the composing call, not a mirror of _composition_issues: the guard still
     catches whatever slips through, so the two lists are free to drift. Identities,
-    figures and document names only - the guard's wording checks are not worth the
-    prompt space, and telling a model which adjectives to use makes it write like a
-    form.
+    figures, document names and the section/article a right comes from - not the
+    guard's wording checks, because telling a model which adjectives to use makes it
+    write like a form.
+
+    The article references earn their place twice over. The GUI builds its source
+    links out of exactly these strings (`linkifyCitations` in public/index.html), so an
+    answer that never names Article 8 is also an answer with nothing to click.
     """
     tokens: list[str] = []
     for option in _options(results.get("flight")):
@@ -836,12 +849,28 @@ def _required_tokens(results: dict) -> list[str]:
         tokens += [amount.replace(",", "") for amount in
                    re.findall(r"\d[\d,]*(?:\.\d+)?", price)]
 
+    # The GUI links a citation's own reference, or a provision inside it, wherever that
+    # exact string appears in the answer - and nothing else. "Article 8" on its own does
+    # not link; "Art. 8(1)(a)" does, and so does "14 CFR Part 260 § 260.6" whole, which
+    # holds no provision the pattern can find. Ask for the shortest form that works.
+    linkable: list[str] = []
+    for citation in results.get("citations") or []:
+        for reference in citation.get("references") or []:
+            reference = str(reference)
+            linkable += PROVISION_RE.findall(reference) or [reference]
+    tokens += linkable
+
     for item in (results.get("rights") or {}).get("entitlements") or []:
         summary = str(item.get("summary") or "")
         tokens += [aliases[0] for _, aliases in
                    _deadline_requirements(summary) + _money_requirements(summary)]
         source = str(item.get("source") or "")
         tokens += [name for name in SOURCE_DOCUMENTS if name in source]
+        # An article no citation spells out still has to be named, or the guard reports
+        # it missing. The spelled-out form is the one a passenger can read.
+        for _, aliases in _citation_requirements(source):
+            if not _has_any(" ".join(linkable), aliases):
+                tokens.append(max(aliases, key=len))
 
     return list(dict.fromkeys(tokens))
 
@@ -1170,6 +1199,11 @@ def _misleading(issues: list[str]) -> list[str]:
     return [issue for issue in issues if issue.startswith(MISLEADING_ISSUES)]
 
 
+def _provenance(issue: str) -> bool:
+    """Where a right came from, as opposed to what the passenger is owed."""
+    return issue.endswith(" citation") or issue.endswith(" source")
+
+
 def _with_missing(draft: str, issues: list[str], request: dict) -> str:
     """Append what the prose dropped rather than discarding the prose.
 
@@ -1177,10 +1211,17 @@ def _with_missing(draft: str, issues: list[str], request: dict) -> str:
     gate than a complete dump of the raw findings. The issue labels name their own
     fact ("the 21-day deadline"), so they can be shown as written - except the
     coverage limit, whose label hides the very airport the passenger needs to see.
+
+    Provenance omissions are dropped rather than shown. "section 6 citation" is a note
+    to ourselves, not something a passenger stranded at a gate can do anything with,
+    and the required-token hint now works to keep the reference in the prose where it
+    belongs - and where the GUI can turn it into a source link.
     """
     warning = request.get("coverage_warning")
     lines = [warning if issue == COVERAGE_ISSUE and warning else issue
-             for issue in issues]
+             for issue in issues if not _provenance(issue)]
+    if not lines:
+        return draft
     return "\n\n".join([draft, "---", MISSING_HEADING,
                         "\n".join(f"- {line}" for line in lines)])
 

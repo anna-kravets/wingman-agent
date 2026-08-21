@@ -1249,9 +1249,11 @@ def test_dropped_prices_and_legal_details_are_appended_not_paid_for_twice(monkey
     assert len(steps) == 1
     assert text.startswith(lossy)
     assert supervisor.MISSING_HEADING in text
-    for dropped in ("the 21-day deadline", "Aviation Services Law source",
+    for dropped in ("the 21-day deadline", "Airport Plaza price bound 150",
                     "room availability is not confirmed"):
         assert dropped in text
+    # Provenance stays out of the passenger's half of the answer.
+    assert "Aviation Services Law source" not in text
 
 
 def test_an_answer_that_would_mislead_the_passenger_still_buys_a_repair(monkeypatch):
@@ -1301,6 +1303,54 @@ def test_the_composing_prompt_names_the_facts_that_must_appear_word_for_word():
     for token in ("LY 1", "Medical Hotel Shai Lev", "EUR 100", "160",
                   "21 days", "Aviation Services Law"):
         assert token in required
+
+
+def test_the_composing_prompt_asks_for_the_article_a_right_comes_from():
+    """The GUI builds its source links out of these strings.
+
+    An answer that never names Article 8 has nothing for the reader to click, and the
+    guard then reports the same absence as a line of jargon at the bottom.
+    """
+    results = {
+        "rights": {"entitlements": [{
+            "kind": "refund",
+            "summary": "Reimbursement within seven days.",
+            "source": ("[S3] Regulation (EC) No 261/2004 Art. 8(1)(a); "
+                       "[S9] Regulation (EC) No 261/2004 Art. 14"),
+        }]},
+        "citations": [
+            {"id": "S3", "references": ["EU261 Art. 8(1)(a)"]},
+            # US DOT style: the pattern finds no provision, so the whole reference is
+            # the only string that links.
+            {"id": "S4", "references": ["14 CFR Part 260 § 260.6"]},
+        ],
+    }
+
+    prompt = supervisor._compose_prompt(
+        {"_passenger_prompt": "help"}, supervisor._digest(results, []), [], results)
+    required = prompt.split(supervisor.REQUIRED_HEADING)[1]
+
+    assert "Art. 8(1)(a)" in required
+    assert "14 CFR Part 260 § 260.6" in required
+    # Article 14 is cited but no citation spells it out, so the readable form stands in.
+    assert "Article 14" in required
+
+
+def test_a_missing_citation_is_not_reported_to_the_passenger_as_jargon():
+    """"section 6 citation" is a note to ourselves. It is not something a passenger
+    stranded at a gate can act on, and it used to be printed at them verbatim."""
+    draft = "You can ask for a refund."
+
+    only_provenance = supervisor._with_missing(
+        draft, ["section 6 citation", "Article 8 citation",
+                "Contract of Carriage source"], {})
+    mixed = supervisor._with_missing(
+        draft, ["Article 8 citation", "the 21-day deadline"], {})
+
+    assert only_provenance == draft
+    assert supervisor.MISSING_HEADING not in only_provenance
+    assert "the 21-day deadline" in mixed
+    assert "Article 8 citation" not in mixed
 
 
 def test_the_composer_rejects_recommending_an_urgent_flight_over_the_safe_choice():
