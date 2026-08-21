@@ -827,6 +827,9 @@ RIGHTS_TERMS = {
     "cash_compensation": ("compensation",),
 }
 
+# (document fragment, article number) pairs that only establish who a regulation covers.
+SCOPE_ONLY_ARTICLES = {("261/2004", "3")}
+
 NUMBER_WORDS = {
     "one": "1", "two": "2", "three": "3", "four": "4", "five": "5",
     "six": "6", "seven": "7", "eight": "8", "nine": "9", "ten": "10",
@@ -880,11 +883,22 @@ def _citation_requirements(source: str) -> list[tuple[str, tuple[str, ...]]]:
     sentence can satisfy at once - naming "Article 8" is what the compose prompt's
     own "no regulation-speak" instruction asks for, and still forces the right law
     to be named.
+
+    Scope provisions are skipped. DocumentationAgent cites them next to the article
+    that actually grants the entitlement, but they grant nothing themselves and no
+    plain-language sentence about a refund names one - requiring it fails every honest
+    draft and costs the passenger the whole composed answer.
     """
     requirements = []
     seen = set()
     pattern = r"\b(s\.|Art\.)\s*([0-9]+)"
-    for prefix, base in re.findall(pattern, source or "", re.IGNORECASE):
+    # Split first so a scope article is only skipped for the document that owns it.
+    for prefix, base, segment in [
+            (p, b, seg) for seg in re.split(r";", source or "")
+            for p, b in re.findall(pattern, seg, re.IGNORECASE)]:
+        if any(document in segment and base == article
+               for document, article in SCOPE_ONLY_ARTICLES):
+            continue
         key = (prefix.lower()[0], base)
         if key in seen:
             continue
@@ -1027,8 +1041,13 @@ def _composition_issues(text: str, request: dict, results: dict) -> list[str]:
     rights_caveats = " ".join(str(c) for c in rights.get("caveats") or [])
     if "applicab" in rights_caveats.lower():
         lowered = text.lower()
-        if "applicab" not in lowered or not any(
-                word in lowered for word in ("uncertain", "depends", "may apply", "not established")):
+        # What has to survive is the concession, not the word "applicability". A composer
+        # told to drop regulation-speak writes "which rules apply here is not certain",
+        # and rejecting that costs the passenger the whole composed answer.
+        hedged = any(word in lowered for word in (
+            "uncertain", "not certain", "unclear", "not clear", "depends",
+            "may apply", "might apply", "not established", "cannot confirm", "can't confirm"))
+        if not re.search(r"\bappl(?:y|ies|icable|icability)\b", lowered) or not hedged:
             issues.append("the EU 261 applicability caveat")
 
     party_size = request.get("party_size")

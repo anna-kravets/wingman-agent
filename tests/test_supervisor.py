@@ -1229,6 +1229,40 @@ def test_the_composer_rejects_recommending_an_urgent_flight_over_the_safe_choice
     assert any("unsafe recommendation" in issue for issue in issues)
 
 
+def test_a_scope_only_citation_is_not_demanded_of_the_composed_answer():
+    """EU 261 Art. 3 says who the regulation covers; it grants no entitlement."""
+    results = {"rights": {"regulation": "EU 261/2004", "entitlements": [{
+        "kind": "refund",
+        "source": ("[S1] Regulation (EC) No 261/2004 Art. 3(1)(a); "
+                   "[S3] Regulation (EC) No 261/2004 Art. 8(1)(a)"),
+        "summary": "The passenger can choose reimbursement within seven days.",
+    }]}}
+    request = {"_passenger_prompt": "Am I still owed anything?"}
+
+    plain = ("You can ask for a **refund** within seven days, or be rerouted - "
+             "that choice is yours under Article 8.")
+
+    assert supervisor._composition_issues(plain, request, results) == []
+    # The article that does grant the refund is still mandatory.
+    assert "Article 8 citation" in supervisor._composition_issues(
+        "You can ask for a refund within seven days.", request, results)
+
+
+def test_the_applicability_caveat_survives_plain_language_wording():
+    results = {"rights": {"entitlements": [], "caveats": [
+        "Applicability is uncertain. The evidence does not deterministically establish "
+        "EU261 scope, U.S. refund coverage, or Israeli territorial coverage."
+    ]}}
+    request = {"_passenger_prompt": "What am I owed?"}
+
+    plain = ("Which rules apply to this route is not certain - I could not pin down "
+             "whether EU 261 covers you.")
+
+    assert supervisor._composition_issues(plain, request, results) == []
+    assert "the EU 261 applicability caveat" in supervisor._composition_issues(
+        "Here is everything you are owed.", request, results)
+
+
 def test_the_composer_rejects_counting_the_child_twice():
     issues = supervisor._composition_issues(
         "For 2 guests, call ahead. Can the hotel place all 3 of you in one private room?",
