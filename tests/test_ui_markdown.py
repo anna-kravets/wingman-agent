@@ -42,3 +42,21 @@ def test_blank_lines_between_items_keep_counting():
 
 def test_a_list_that_is_not_split_has_no_start_attribute():
     assert "<ol><li>First</li><li>Second</li></ol>" in render("1. First\n2. Second")
+
+
+def test_bullets_under_a_numbered_heading_do_not_become_numbered_steps():
+    """The shape the composer actually writes: "1. Flight" then unindented bullets.
+
+    Both markers sit at depth 0, so the bullets used to be absorbed into the <ol>
+    and rendered as steps 2 and 3 of the section they belong under.
+    """
+    html = render("1. Flight\n- Rebooking is possible.\n- Not confirmed yet.")
+
+    assert html.startswith("<ol><li>Flight</li></ol>")
+    assert "<ul><li>Rebooking is possible.</li><li>Not confirmed yet.</li></ul>" in html
+
+
+def test_numbered_sections_separated_by_bullets_keep_counting():
+    html = render("1. Flight\n- Rebooking.\n\n2. Sleep\n- No hotel.")
+
+    assert '<ol start="2"><li>Sleep</li></ol>' in html
