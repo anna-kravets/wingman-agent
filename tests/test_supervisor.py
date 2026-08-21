@@ -90,6 +90,43 @@ def test_gate_asks_only_for_the_half_the_passenger_did_not_give():
     assert "where to" in supervisor._missing_question("origin", {})
 
 
+def test_a_disrupted_departure_leaves_the_passenger_at_the_origin():
+    """Asked to infer this, the model gets it right about half the time.
+
+    Five identical replays of one real message returned stranded_at on three of
+    them and null on two, so the passenger who had already given their route was
+    asked where they were standing, twice in a row. It is not a judgement call:
+    a departure that was delayed, cancelled or overbooked has not left yet.
+    """
+    request = supervisor._request_from(
+        {"flight_number": "UA905", "origin": "ORD", "destination": "EWR",
+         "disruption": "delayed", "needs": ["rights"]},
+        True, "2026-08-21T13:30:00")
+
+    assert request["stranded_at"] == "ORD"
+    assert request["missing"] == []
+
+
+def test_an_origin_nobody_can_look_up_is_not_copied_into_stranded_at():
+    """Otherwise one ambiguous city becomes two questions about the same airport."""
+    request = supervisor._request_from(
+        {"flight_number": "UA905", "origin": "Chicago", "destination": "EWR",
+         "disruption": "delayed", "needs": ["rights"]},
+        True, "2026-08-21T13:30:00")
+
+    assert request["stranded_at"] is None
+
+
+def test_a_stranded_airport_the_passenger_gave_is_never_overwritten():
+    """Connections exist: they can be stuck somewhere that is not their origin."""
+    request = supervisor._request_from(
+        {"flight_number": "UA905", "origin": "ORD", "destination": "EWR",
+         "stranded_at": "DEN", "disruption": "delayed", "needs": ["rights"]},
+        True, "2026-08-21T13:30:00")
+
+    assert request["stranded_at"] == "DEN"
+
+
 def test_gate_asks_for_one_detail_in_the_singular():
     text, _, _ = supervisor.run(
         "cancelled, TLV to JFK, I'm stuck at TLV", [])

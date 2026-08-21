@@ -548,6 +548,16 @@ def _request_from(parsed: dict, follow_up: bool, local_now: str) -> dict:
     for field in ("origin", "destination", "stranded_at"):
         request[field] = airports.resolve(request[field]) or request[field]
 
+    # A departure that was delayed, cancelled or overbooked has not left, so the
+    # passenger is standing at its origin. REFINE_SYSTEM_PROMPT asks the model to say
+    # so and it obliges about half the time - measured, five identical replays of one
+    # real message. The other half asked a passenger who had just given their route
+    # where they were, and asking again only rolled the dice again. Only from an
+    # origin that resolves: copying an ambiguous city would turn one unanswerable
+    # question into two.
+    if not request["stranded_at"] and airports.lookup(request["origin"] or ""):
+        request["stranded_at"] = request["origin"]
+
     disruption = _text(parsed.get("disruption"))
     request["disruption"] = disruption if disruption in DISRUPTIONS else None
     request["party_size"] = _party_size(parsed.get("party_size"))
