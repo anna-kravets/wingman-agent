@@ -759,7 +759,8 @@ def test_the_rights_caveats_are_not_routed_as_the_search_protocol():
     text = supervisor._digest(results, [])
 
     # Same field name, different meaning: evidence gaps, not the NOTE:/ASK:/CONFIRM: protocol.
-    assert "Not established from the sources: No evidence on meals was retrieved." in text
+    assert "Not established from the sources:" in text
+    assert "- No evidence on meals was retrieved." in text
     assert "WORTH KNOWING" not in text
 
 
@@ -1271,3 +1272,62 @@ def test_the_gate_still_asks_when_a_flight_search_is_wanted():
 
     assert "I need a couple of details" in text
     assert modules_of(steps) == ["Supervisor"]
+
+
+# --- the rights-coverage limit -------------------------------------------------
+
+
+def test_a_route_inside_the_covered_jurisdictions_raises_no_coverage_warning():
+    assert supervisor._coverage_warning(
+        {"origin": "TLV", "destination": "FRA"}) is None
+    assert supervisor._coverage_warning(
+        {"origin": "ZRH", "destination": "CDG"}) is None
+
+
+def test_an_uncovered_endpoint_names_itself_and_the_supported_regions():
+    # LHR is deliberately absent from every jurisdiction set: post-Brexit the route is
+    # governed by UK261, which the corpus does not hold. Without this the US half of
+    # LHR -> JFK retrieves cleanly and reads like a complete answer.
+    warning = supervisor._coverage_warning({"origin": "LHR", "destination": "JFK"})
+
+    assert "LHR" in warning
+    assert "JFK" not in warning
+    assert supervisor.SUPPORTED_REGIONS in warning
+
+
+def test_both_endpoints_uncovered_are_reported_together():
+    warning = supervisor._coverage_warning({"origin": "BKK", "destination": "HND"})
+
+    assert "BKK and HND are outside" in warning
+
+
+def test_a_route_out_of_coverage_warns_the_passenger_in_the_answer():
+    text, _, _ = supervisor.run("BA292 LHR -> JFK was delayed 6 hours, what am I owed?", [])
+
+    assert "LHR" in text
+    assert supervisor.SUPPORTED_REGIONS in text
+
+
+def test_a_stay_only_follow_up_carries_no_legal_disclaimer():
+    # The warning is about entitlements. A question about beds must not collect one.
+    history = [{"prompt": "BA292 LHR -> JFK delayed", "response": "Here is the plan.",
+                "results": {}}]
+
+    text, _, _ = supervisor.run("where can I sleep tonight?", history)
+
+    assert supervisor.SUPPORTED_REGIONS not in text
+
+
+def test_a_draft_that_drops_the_coverage_limit_is_rejected():
+    request = {"origin": "LHR", "destination": "JFK",
+               "coverage_warning": supervisor._coverage_warning(
+                   {"origin": "LHR", "destination": "JFK"})}
+
+    silent = "You are owed a refund under US DOT rules and rebooking on the next flight."
+    honest = ("Heads up: LHR sits outside the regions whose rules I hold, so this is "
+              "incomplete. You are owed a refund under US DOT rules.")
+
+    assert "the coverage limit on this route" in supervisor._composition_issues(
+        silent, request, {})
+    assert "the coverage limit on this route" not in supervisor._composition_issues(
+        honest, request, {})

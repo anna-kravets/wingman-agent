@@ -22,6 +22,7 @@ from datetime import datetime, timedelta
 from lib import llm
 from lib.citations import extract_citations
 from lib.agents import accommodation_agent, documentation_agent, flight_agent
+from lib.rag.routing import EU_EEA_AIRPORTS, ISRAEL_AIRPORTS, US_AIRPORTS
 from lib.tools import airports, flights
 
 MODULE = "Supervisor"
@@ -59,6 +60,13 @@ CAVEAT_BLOCKS = (
     ("ASK:", "THINGS I NEED FROM YOU"),
     ("NOTE:", "WORTH KNOWING"),
 )
+
+# The rights corpus holds three jurisdictions and no others (`lib/rag/routing.py`). An
+# airport outside all three attaches no law, so DocumentationAgent answers that end of
+# the route from whatever the model already believes - which is exactly the unsourced
+# guessing the reflection loop exists to prevent. Say so instead of hiding it.
+SUPPORTED_REGIONS = "the US, Israel, and the EU/EEA (Switzerland included)"
+SUPPORTED_AIRPORTS = US_AIRPORTS | ISRAEL_AIRPORTS | EU_EEA_AIRPORTS
 
 REQUIRED_FIELDS = ("flight_number", "origin", "destination", "disruption", "stranded_at")
 
@@ -223,6 +231,11 @@ question instead of the general invitation.
 
 State each assumption you are given, in your own words, so the passenger can correct it - but only
 the ones you have not already told them earlier in this conversation.
+
+If you are given a "Coverage limit" line, say it before anything you tell them about what they are
+owed: name the regions whose rules you actually hold, name the airport that falls outside them, and
+say that the entitlements at that end may be incomplete. Do not bury it at the end and do not soften
+it away. Say it once, in your own words.
 
 End by inviting a follow-up: the passenger can compare options or ask about the terms of any one of
 them. Skip that invitation if you already gave it and nothing about the plan has changed since.
@@ -650,6 +663,26 @@ def _stay_line(option: dict) -> str:
     return ", ".join(p for p in parts if p) + "."
 
 
+def _coverage_warning(request: dict) -> str | None:
+    """Warn when either end of the route sits outside every jurisdiction we hold.
+
+    Both halves matter. Neither end supported means nothing said about entitlements is
+    grounded. One end supported is the quieter failure: the law of the covered end is
+    retrieved and reads like a complete answer, while the other end's regime - UK261 on
+    an LHR departure, say - is missing with nothing on the page to say so.
+    """
+    codes = [str(request.get(field) or "").strip().upper()
+             for field in ("origin", "destination")]
+    outside = list(dict.fromkeys(c for c in codes if c and c not in SUPPORTED_AIRPORTS))
+    if not outside:
+        return None
+    subject = " and ".join(outside)
+    verb = "is" if len(outside) == 1 else "are"
+    return (f"Coverage limit: I only hold passenger-rights rules for {SUPPORTED_REGIONS}. "
+            f"{subject} {verb} outside that, so anything I say about what you are owed "
+            "at that end of the route may be incomplete or inaccurate.")
+
+
 def _split_caveats(results: dict) -> dict[str, list[str]]:
     """Search-agent caveats, routed by prefix and stripped of it.
 
@@ -712,12 +745,16 @@ def _digest(results: dict, failures: list[str]) -> str:
                 + (f" [{source}]" if source else "")
                 + (f" ({confidence} confidence)" if confidence else "")
             )
-        for action in rights.get("next_actions") or []:
-            lines.append(f"  Next: {action}")
+        actions = rights.get("next_actions") or []
+        if actions:
+            lines.append("  Next:")
+            lines += [f"    - {action}" for action in actions]
         # These carry no NOTE:/ASK:/CONFIRM: prefix and are not that protocol — they are
         # gaps in the evidence the reflection loop found, and belong in their own block.
-        for caveat in rights.get("caveats") or []:
-            lines.append(f"  Not established from the sources: {caveat}")
+        caveats = rights.get("caveats") or []
+        if caveats:
+            lines.append("  Not established from the sources:")
+            lines += [f"    - {caveat}" for caveat in caveats]
         lines.append("")
 
     routed = _split_caveats(results)
@@ -753,6 +790,8 @@ def _compose_prompt(request: dict, digest: str, history: list[dict]) -> str:
     prior = _prior_options_digest(history)
     if prior:
         lines += [""] + prior
+    if request.get("coverage_warning"):
+        lines += ["", request["coverage_warning"]]
     if request.get("assumptions"):
         lines += ["", "Assumptions behind this (see the system prompt for when to mention one):"]
         lines += [f"  - {a}" for a in request["assumptions"]]
@@ -993,6 +1032,18 @@ def _composition_issues(text: str, request: dict, results: dict) -> list[str]:
             if not has_branch or (number and not _has_any(text, (number.group(0),))):
                 issues.append("the same-day-flight assumption behind the hotel search")
 
+    # Deliberately lenient: this asks for the uncovered airport plus any wording that
+    # concedes a limit, not one fixed sentence. A guard strict enough to reject a
+    # perfectly honest draft costs the passenger the whole composed answer.
+    if request.get("coverage_warning"):
+        uncovered = [code for code in (str(request.get("origin") or "").strip().upper(),
+                                       str(request.get("destination") or "").strip().upper())
+                     if code and code not in SUPPORTED_AIRPORTS]
+        conceded = _has_any(text, ("outside", "do not cover", "don't cover", "not covered",
+                                   "only hold", "only have", "limited to", "incomplete"))
+        if not conceded or not any(_has_any(text, (code,)) for code in uncovered):
+            issues.append("the coverage limit on this route")
+
     return list(dict.fromkeys(issues))
 
 
@@ -1038,7 +1089,11 @@ def _compose(
     if assumptions:
         safe_digest = ("ASSUMPTIONS BEHIND THIS PLAN\n"
                        + "\n".join(f"  - {item}" for item in assumptions)
-                       + "\n\n" + digest)
+                       + "\n\n" + safe_digest)
+    # Above everything, assumptions included: a passenger reading the flat fallback
+    # must hit the limits of the answer before the answer itself.
+    if request.get("coverage_warning"):
+        safe_digest = request["coverage_warning"] + "\n\n" + safe_digest
     if re.search(r"\b(?:bags?|baggage)\b",
                  str(request.get("_passenger_prompt") or ""), re.IGNORECASE):
         safe_digest += (
@@ -1178,6 +1233,11 @@ def run(prompt: str, history: list[dict], *,
             dispatch("stay", accommodation_agent.run, request, stay_window)
 
     if "rights" in needs:
+        # Only when entitlements are on the table: a flight-only follow-up does not
+        # need a legal disclaimer attached to it.
+        warning = _coverage_warning(request)
+        if warning:
+            request["coverage_warning"] = warning
         dispatch("rights", documentation_agent.run, request)
 
     text, compose_steps = _compose(request, results, failures, history)
