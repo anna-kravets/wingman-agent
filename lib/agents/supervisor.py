@@ -105,6 +105,15 @@ QUESTIONS = {
     "stranded_at": "Which airport are you at right now?",
 }
 
+# Three of those questions cover two fields at once, and asking the whole thing back when
+# the passenger already gave half of it reads as not having listened. Each entry is the
+# field that makes up the other half, plus the question to ask when that half is known.
+HALF_QUESTIONS = {
+    "flight_number": ("airline", "What was the flight number?"),
+    "origin": ("destination", "Which airport were you flying from?"),
+    "destination": ("origin", "Where were you flying to?"),
+}
+
 # A route that cannot exist or an airport nobody can look up leaves the crew nothing to
 # search against, so it is worth a round trip. incident_time used to block here too, but
 # nothing downstream needs it to be exactly right — the flight window comes from
@@ -117,10 +126,6 @@ BLOCKING_CONFLICTS = {"route", "stranded_at"}
 # unusual (incident_time, now that it no longer blocks) must not reach an agent's prompt
 # unexplained. Anything listed here is cleared, and the assumption is stated in the plan.
 CLEARED_ON_CONFLICT = {"arrive_by", "incident_time"}
-
-CONFLICT_QUESTIONS = {
-    "stranded_at": "I could not find an airport with the code {stated}. Which airport are you at?",
-}
 
 REFINE_SYSTEM_PROMPT = """You read a message from an air passenger whose flight has just been disrupted and turn it into a structured request.
 
@@ -136,9 +141,11 @@ Return a JSON object only, no prose:
  "conflicts": [{"field", "stated", "reason"}],
  "missing": [field names]}
 
-"stranded_at" is an airport, not a place inside one — give its IATA code where you can work it
-out. If they were stopped before leaving, repeat the same code you put in "origin"; never write
-the word "origin" itself.
+"origin", "destination" and "stranded_at" are airports, not places inside one — give the IATA
+code whenever you can work it out, including from a city name they wrote instead ("Dublin" is
+"DUB"). Leave the city as written only when it has several airports and they did not say which.
+If they were stopped before leaving, repeat in "stranded_at" the same code you put in "origin";
+never write the word "origin" itself.
 
 "incident_time" is when the disrupted flight was scheduled to leave, in ISO 8601. Give it whenever
 the passenger says or implies it, resolving relative words against the current date and time you are
@@ -489,7 +496,7 @@ def _conflicts(request: dict) -> list[dict]:
     stranded = request.get("stranded_at")
     if stranded and not airports.lookup(stranded):
         found.append({"field": "stranded_at", "stated": stranded,
-                      "reason": "that is not an airport code I can look up"})
+                      "reason": airports.unknown_reason(stranded)})
 
     arrive_by = _when(request.get("arrive_by"))
     if now and arrive_by and arrive_by < now:
@@ -503,13 +510,19 @@ def _sentence(text: str) -> str:
     return text[:1].upper() + text[1:] if text else text
 
 
-def _conflict_question(conflict: dict, now: str) -> str:
-    template = CONFLICT_QUESTIONS.get(conflict["field"])
-    if template:
-        return template.format(stated=conflict["stated"], now=now)
-    if conflict["field"] == "route":
-        # route_problem already writes a passenger-ready sentence. It starts lower-case
-        # because today it is interpolated after "FlightAgent: ".
+def _missing_question(field: str, request: dict) -> str:
+    """The question for a missing field, narrowed to the half the passenger did not give."""
+    half = HALF_QUESTIONS.get(field)
+    if half and request.get(half[0]):
+        return half[1]
+    return QUESTIONS[field]
+
+
+def _conflict_question(conflict: dict) -> str:
+    if conflict["field"] in BLOCKING_CONFLICTS:
+        # route_problem and airports.unknown_reason already write passenger-ready
+        # sentences - which airport was meant, or that the code cannot be looked up.
+        # They start lower-case because they are interpolated after "FlightAgent: ".
         return _sentence(conflict["reason"])
     return f"You said {conflict['stated']} — {conflict['reason']}. Which is right?"
 
@@ -528,6 +541,13 @@ def _request_from(parsed: dict, follow_up: bool, local_now: str) -> dict:
             "arrive_by", "incident_time",
         )
     }
+    # Passengers say "Dublin", not "DUB", and everything downstream - the flight
+    # search, the hotel search, the rights routing - only speaks codes. Resolve here,
+    # the one place the fields are set, so no consumer has to. A city with several
+    # airports stays as written and becomes a question (`_conflicts`).
+    for field in ("origin", "destination", "stranded_at"):
+        request[field] = airports.resolve(request[field]) or request[field]
+
     disruption = _text(parsed.get("disruption"))
     request["disruption"] = disruption if disruption in DISRUPTIONS else None
     request["party_size"] = _party_size(parsed.get("party_size"))
@@ -1169,10 +1189,13 @@ def run(prompt: str, history: list[dict], *,
     # details it already gave.
     if (request["missing"] or blocking) and needs:
         asked = list(dict.fromkeys(
-            [_conflict_question(c, request["local_now"]) for c in blocking]
-            + [QUESTIONS[f] for f in request["missing"]]
+            [_conflict_question(c) for c in blocking]
+            + [_missing_question(f, request) for f in request["missing"]]
         ))
-        opener = ("Before I can help, I need to check a couple of things:" if blocking
+        one = len(asked) == 1
+        opener = ("Before I can help, I need to check one thing:" if blocking and one
+                  else "Before I can help, I need to check a couple of things:" if blocking
+                  else "Before I can help, I need one more detail:" if one
                   else "Before I can help, I need a couple of details:")
         return opener + "\n" + "\n".join(f"  - {q}" for q in asked), steps, {"_pending_needs": needs}
 

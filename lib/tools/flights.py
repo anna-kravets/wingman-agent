@@ -71,8 +71,7 @@ def route_problem(origin: str | None, destination: str | None) -> str | None:
                 f"so there is no flight to look for.")
     for code in (start, end):
         if not airports.lookup(code):
-            return (f"{code} is not an airport I can look up - it may be closed, or the "
-                    f"code may be wrong. Check it and tell me again.")
+            return airports.unknown_reason(code)
     return None
 
 

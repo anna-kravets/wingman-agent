@@ -80,7 +80,10 @@ def _refine_response(user_prompt: str) -> dict:
     follow_up = "Earlier in this conversation:" in user_prompt and not _disruption_in(message)
 
     flight = re.search(r"\b([A-Z]{2})\s?(\d{2,4})\b", user_prompt)
-    route = re.search(r"\b([A-Z]{3})\s*(?:->|→|to)\s*([A-Z]{3})\b", user_prompt)
+    # City names as well as codes: a real model writes "Dublin" when the passenger
+    # does, and the Supervisor is what turns that into an airport code.
+    route = re.search(r"\b([A-Z][A-Za-z]{2,})\s*(?:->|→|to)\s*([A-Z][A-Za-z]{2,})\b",
+                      user_prompt)
 
     needs = list(FOLLOW_UP_WORDS)
     if follow_up:

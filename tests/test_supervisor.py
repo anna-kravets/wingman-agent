@@ -67,6 +67,25 @@ def test_gate_does_not_repeat_the_same_question_twice():
     assert text.count("Which airport were you flying from") == 1
 
 
+def test_gate_asks_only_for_the_half_the_passenger_did_not_give():
+    # "Ryanair cancelled on me" names the airline, so asking for it again reads as
+    # not having listened.
+    named = {"airline": "Ryanair", "destination": "JFK"}
+    assert supervisor._missing_question("flight_number", named) == "What was the flight number?"
+    assert supervisor._missing_question("origin", named) == "Which airport were you flying from?"
+    assert supervisor._missing_question("destination", {"origin": "TLV"}) == "Where were you flying to?"
+    # Nothing on the table: the paired question stands.
+    assert "airline" in supervisor._missing_question("flight_number", {})
+    assert "where to" in supervisor._missing_question("origin", {})
+
+
+def test_gate_asks_for_one_detail_in_the_singular():
+    text, _, _ = supervisor.run(
+        "cancelled, TLV to JFK, I'm stuck at TLV", [])
+    assert "I need one more detail" in text
+    assert text.count("  - ") == 1
+
+
 def test_complete_message_dispatches_the_crew():
     text, steps, _ = supervisor.run(COMPLETE, [])
 
@@ -602,6 +621,25 @@ def test_a_blocking_conflict_with_nothing_to_dispatch_does_not_interrogate():
 
     assert modules_of(steps) == ["Supervisor", "Supervisor"]
     assert "Before I can help" not in text
+
+
+def test_a_city_name_is_turned_into_an_airport_code():
+    # troubleshooting/conv3.json: the passenger wrote "Dublin to Barcelona" and was
+    # told DUBLIN was not an airport anyone could look up.
+    text, steps, _ = supervisor.run("FR1234 Dublin to Barcelona was cancelled", [])
+
+    assert "not an airport I can look up" not in text
+    compose = [s for s in steps if s["module"] == "Supervisor"][-1]
+    assert "Route: DUB -> BCN" in compose["prompt"]["user_prompt"]
+
+
+def test_a_city_with_several_airports_asks_which_one():
+    text, steps, _ = supervisor.run("BA117 London to Boston was cancelled", [])
+
+    assert "London has more than one airport" in text
+    assert "LHR (London, GB)" in text
+    # Asking costs one call, exactly like every other blocking conflict.
+    assert modules_of(steps) == ["Supervisor"]
 
 
 def test_a_six_week_old_disruption_still_gets_a_plan(monkeypatch):
