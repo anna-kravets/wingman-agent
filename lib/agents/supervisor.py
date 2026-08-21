@@ -793,7 +793,47 @@ def _digest(results: dict, failures: list[str]) -> str:
     return "\n".join(lines)
 
 
-def _compose_prompt(request: dict, digest: str, history: list[dict]) -> str:
+REQUIRED_HEADING = "Must appear in your answer word for word:"
+
+# Document names the guard insists on seeing spelled out.
+SOURCE_DOCUMENTS = ("Aviation Services Law", "Conditions of Carriage",
+                    "Contract of Carriage")
+
+
+def _required_tokens(results: dict) -> list[str]:
+    """The concrete strings a fluent rewrite tends to drop.
+
+    A hint for the composing call, not a mirror of _composition_issues: the guard still
+    catches whatever slips through, so the two lists are free to drift. Identities,
+    figures and document names only - the guard's wording checks are not worth the
+    prompt space, and telling a model which adjectives to use makes it write like a
+    form.
+    """
+    tokens: list[str] = []
+    for option in _options(results.get("flight")):
+        if option.get("flight_number"):
+            tokens.append(str(option["flight_number"]))
+
+    for option in _options(results.get("stay")):
+        if option.get("name"):
+            tokens.append(str(option["name"]))
+        price = str(option.get("price_estimate") or "")
+        tokens += [aliases[0] for _, aliases in _money_requirements(price)]
+        tokens += [amount.replace(",", "") for amount in
+                   re.findall(r"\d[\d,]*(?:\.\d+)?", price)]
+
+    for item in (results.get("rights") or {}).get("entitlements") or []:
+        summary = str(item.get("summary") or "")
+        tokens += [aliases[0] for _, aliases in
+                   _deadline_requirements(summary) + _money_requirements(summary)]
+        source = str(item.get("source") or "")
+        tokens += [name for name in SOURCE_DOCUMENTS if name in source]
+
+    return list(dict.fromkeys(tokens))
+
+
+def _compose_prompt(request: dict, digest: str, history: list[dict],
+                    results: dict) -> str:
     lines = [
         f"Flight: {request.get('airline')} {request.get('flight_number')}",
         f"Route: {request.get('origin')} -> {request.get('destination')}",
@@ -816,6 +856,13 @@ def _compose_prompt(request: dict, digest: str, history: list[dict]) -> str:
         lines += ["", "Assumptions behind this (see the system prompt for when to mention one):"]
         lines += [f"  - {a}" for a in request["assumptions"]]
     lines += ["", "Findings:", digest]
+    # The guard downstream grades on these exact strings. Showing them beats making the
+    # model guess, then paying to repair what it guessed wrong.
+    required = _required_tokens(results)
+    if required:
+        lines += ["", REQUIRED_HEADING,
+                  "  " + " | ".join(required),
+                  "Weave them into your sentences. Do not list them."]
     return "\n".join(lines)
 
 
@@ -1081,9 +1128,45 @@ def _composition_issues(text: str, request: dict, results: dict) -> list[str]:
         conceded = _has_any(text, ("outside", "do not cover", "don't cover", "not covered",
                                    "only hold", "only have", "limited to", "incomplete"))
         if not conceded or not any(_has_any(text, (code,)) for code in uncovered):
-            issues.append("the coverage limit on this route")
+            issues.append(COVERAGE_ISSUE)
 
     return list(dict.fromkeys(issues))
+
+
+# Leaving a fact out and stating something untrue are not the same failure. Only these
+# can send the passenger to act on a wrong belief - a room that was never held, a flight
+# with no seat, a right they are told they do not have. Everything else the guard finds
+# is an omission: the answer is true, just short, and a footnote fixes it.
+MISLEADING_ISSUES = (
+    "unsafe recommendation of urgent flight",
+    "confirmation that the urgent flight has seats and is still boardable",
+    "stay dates must not be labelled as room availability",
+    "non-categorical wording for the baggage evidence gap",
+    "party size is",
+)
+
+MISSING_HEADING = "**Also from your findings**"
+
+COVERAGE_ISSUE = "the coverage limit on this route"
+
+
+def _misleading(issues: list[str]) -> list[str]:
+    return [issue for issue in issues if issue.startswith(MISLEADING_ISSUES)]
+
+
+def _with_missing(draft: str, issues: list[str], request: dict) -> str:
+    """Append what the prose dropped rather than discarding the prose.
+
+    A true, readable answer missing one figure is worth far more to a passenger at a
+    gate than a complete dump of the raw findings. The issue labels name their own
+    fact ("the 21-day deadline"), so they can be shown as written - except the
+    coverage limit, whose label hides the very airport the passenger needs to see.
+    """
+    warning = request.get("coverage_warning")
+    lines = [warning if issue == COVERAGE_ISSUE and warning else issue
+             for issue in issues]
+    return "\n\n".join([draft, "---", MISSING_HEADING,
+                        "\n".join(f"- {line}" for line in lines)])
 
 
 def _repair_prompt(original_prompt: str, draft: str, issues: list[str]) -> str:
@@ -1140,7 +1223,7 @@ def _compose(
             "  - Ask the airline whether your bags will stay checked through to the replacement "
             "flight or be returned, and how they will be transferred if you change carriers."
         )
-    prompt = _compose_prompt(request, digest, history)
+    prompt = _compose_prompt(request, digest, history, results)
     try:
         text, step = llm.call(
             MODULE,
@@ -1159,9 +1242,11 @@ def _compose(
     issues = _composition_issues(draft, request, results)
     if not issues:
         return draft, [step]
+    if not _misleading(issues):
+        return _with_missing(draft, issues, request), [step]
 
-    # Pay for a second composition only when the first objectively lost critical
-    # facts. This is a bounded repair, not an open-ended reflection loop.
+    # Pay for a second composition only when the first said something that could
+    # mislead. This is a bounded repair, not an open-ended reflection loop.
     try:
         repaired, repair_step = llm.call(
             MODULE,
@@ -1173,10 +1258,14 @@ def _compose(
         return safe_digest, [step] + exc.steps
 
     repaired = (repaired or "").strip()
-    if repaired and not _composition_issues(repaired, request, results):
-        return repaired, [step, repair_step]
-    # The flat digest is less elegant, but it is complete and grounded. Never return
-    # a polished answer that is known to have discarded the passenger's key facts.
+    if repaired:
+        remaining = _composition_issues(repaired, request, results)
+        if not remaining:
+            return repaired, [step, repair_step]
+        if not _misleading(remaining):
+            return _with_missing(repaired, remaining, request), [step, repair_step]
+    # Two calls in and it still says something untrue. The flat digest is far less
+    # elegant, but it is grounded, and a misleading answer is worse than an ugly one.
     return safe_digest, [step, repair_step]
 
 

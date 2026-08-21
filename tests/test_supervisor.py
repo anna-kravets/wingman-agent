@@ -19,6 +19,17 @@ COMPLETE = "LH318 TLV -> FRA was cancelled at the gate"
 MODULES = {"Supervisor", "FlightAgent", "AccommodationAgent", "DocumentationAgent"}
 
 
+def _answers_with(answers):
+    """A fake llm.call returning each answer in turn, so steps count calls made."""
+    remaining = iter(answers)
+
+    def call(module, system_prompt, user_prompt, **kwargs):
+        answer = next(remaining)
+        return answer, make_step(module, system_prompt, user_prompt, {"text": answer})
+
+    return call
+
+
 def test_supervisor_completion_guards_share_the_project_10k_ceiling():
     assert supervisor.REFINE_MAX_COMPLETION_TOKENS == 10_000
     assert supervisor.COMPOSE_MAX_COMPLETION_TOKENS == 10_000
@@ -706,7 +717,7 @@ def test_a_blocking_conflict_produces_no_assumption():
 
 def test_assumptions_reach_the_composing_call():
     request = {"assumptions": ["They said X, but Y."], "local_now": "2026-08-15T22:15:00"}
-    prompt = supervisor._compose_prompt(request, "digest", [])
+    prompt = supervisor._compose_prompt(request, "digest", [], {})
 
     assert "They said X, but Y." in prompt
 
@@ -718,7 +729,7 @@ def test_stranded_at_reaches_the_composing_call():
     """
     request = {"origin": "TLV", "destination": "JFK", "stranded_at": "TLV",
                "local_now": "2026-08-15T22:15:00"}
-    prompt = supervisor._compose_prompt(request, "digest", [])
+    prompt = supervisor._compose_prompt(request, "digest", [], {})
 
     assert "Stranded at: TLV" in prompt
 
@@ -1007,7 +1018,7 @@ def test_the_composing_prompt_carries_the_rich_prior_digest_not_the_identity_one
                      "price_estimate": "EUR 120 total (estimate)"}],
         "recommended_id": "H1",
     }}}]
-    prompt = supervisor._compose_prompt({"local_now": "2026-08-15T22:15:00"}, "digest", history)
+    prompt = supervisor._compose_prompt({"local_now": "2026-08-15T22:15:00"}, "digest", history, {})
 
     assert "EUR 120 total (estimate)" in prompt
 
@@ -1161,8 +1172,12 @@ def test_an_explicit_hotel_request_on_the_first_turn_is_not_lost_among_other_nee
     assert "Onward flight departs: None" in asked
 
 
-def test_the_composer_repairs_an_answer_that_drops_prices_and_legal_details(monkeypatch):
-    """Facts reaching the prompt is not enough; they must survive the final prose."""
+def test_dropped_prices_and_legal_details_are_appended_not_paid_for_twice(monkeypatch):
+    """Facts reaching the prompt is not enough; they must survive delivery.
+
+    An omission is not a reason to throw away a true, readable answer. The passenger
+    keeps the prose and gets the dropped facts under it, and no second call is paid for.
+    """
     results = {
         "stay": {
             "options": [{"id": "H1", "name": "Airport Plaza", "distance_km": 2.4,
@@ -1183,17 +1198,8 @@ def test_the_composer_repairs_an_answer_that_drops_prices_and_legal_details(monk
             "caveats": [],
         },
     }
-    complete = supervisor._digest(results, [])
-    answers = iter([
-        "Airport Plaza is nearby. A refund may be available.",
-        complete,
-    ])
-
-    def lossy_then_complete(module, system_prompt, user_prompt, **kwargs):
-        answer = next(answers)
-        return answer, make_step(module, system_prompt, user_prompt, {"text": answer})
-
-    monkeypatch.setattr(supervisor.llm, "call", lossy_then_complete)
+    lossy = "**Airport Plaza** is nearby. A refund may be available."
+    monkeypatch.setattr(supervisor.llm, "call", _answers_with([lossy]))
     request = {
         "airline": "LH", "flight_number": "LH318", "origin": "TLV",
         "destination": "FRA", "disruption": "cancelled", "party_size": 2,
@@ -1202,11 +1208,62 @@ def test_the_composer_repairs_an_answer_that_drops_prices_and_legal_details(monk
 
     text, steps = supervisor._compose(request, results, [], [])
 
+    # One call: an omission must not buy a second composition.
+    assert len(steps) == 1
+    assert text.startswith(lossy)
+    assert supervisor.MISSING_HEADING in text
+    for dropped in ("the 21-day deadline", "Aviation Services Law source",
+                    "room availability is not confirmed"):
+        assert dropped in text
+
+
+def test_an_answer_that_would_mislead_the_passenger_still_buys_a_repair(monkeypatch):
+    """Getting a fact wrong is not the same as leaving one out - only this pays twice."""
+    request = {"party_size": 2, "_passenger_prompt": "I am travelling with one child."}
+    wrong = "I found one room for all 3 of you."
+    fixed = "I found one room for the 2 of you."
+    monkeypatch.setattr(supervisor.llm, "call", _answers_with([wrong, fixed]))
+
+    text, steps = supervisor._compose(request, {}, [], [])
+
     assert len(steps) == 2
-    assert "90-150" in text
-    assert "21 days" in text
-    assert "Aviation Services Law" in text
-    assert "s.6(a)(2)" in text
+    assert text == fixed
+    assert supervisor.MISSING_HEADING not in text
+
+
+def test_a_falsehood_surviving_the_repair_falls_back_to_the_findings(monkeypatch):
+    results = {"rights": {"regulation": "EU 261/2004", "entitlements": [], "caveats": []}}
+    request = {"party_size": 2, "_passenger_prompt": "I am travelling with one child."}
+    monkeypatch.setattr(supervisor.llm, "call", _answers_with([
+        "One room for all 3 of you.", "Still one room for all 3 of you."]))
+
+    text, steps = supervisor._compose(request, results, [], [])
+
+    assert len(steps) == 2
+    assert text == supervisor._digest(results, [])
+
+
+def test_the_composing_prompt_names_the_facts_that_must_appear_word_for_word():
+    """The model was being graded on a rubric it had never been shown."""
+    results = {
+        "flight": {"options": [{"id": "F1", "flight_number": "LY 1"}], "recommended_id": "F1"},
+        "stay": {"options": [{"id": "H1", "name": "Medical Hotel Shai Lev",
+                              "price_estimate": "Roughly EUR 100-160 (estimate)"}],
+                 "recommended_id": "H1"},
+        "rights": {"entitlements": [{
+            "kind": "refund",
+            "summary": "Reimbursement must be paid within 21 days.",
+            "source": "[S3] Aviation Services Law s.6(a)(2)",
+        }]},
+    }
+
+    prompt = supervisor._compose_prompt(
+        {"_passenger_prompt": "help"}, supervisor._digest(results, []), [], results)
+
+    required = prompt.split(supervisor.REQUIRED_HEADING)[1]
+    for token in ("LY 1", "Medical Hotel Shai Lev", "EUR 100", "160",
+                  "21 days", "Aviation Services Law"):
+        assert token in required
 
 
 def test_the_composer_rejects_recommending_an_urgent_flight_over_the_safe_choice():
