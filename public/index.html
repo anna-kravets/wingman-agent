@@ -1054,6 +1054,28 @@
       return `<div class="md-table-wrap"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
     }
 
+    const CITATION_PROVISION = /(?:s\.|section|Art\.|Article)\s*\d+[\w().-]*(?:\([^)]*\))*?(?:-\([^)]*\))?/gi;
+    // A reference usually arrives as a citation plus a gloss - "Rule 24 (snacks and
+    // meals)" - and the answer only ever repeats the citation.
+    const CITATION_GLOSS = /\s*\(([^()]*(?:\([^()]*\)[^()]*)*)\)\s*$/;
+    // "Art. 9(1)(a)" and "Article 9(1)(a)" are the same provision, as are "s.7(a)" and
+    // "Section 7(a)"; which spelling reaches the answer is not something we control.
+    // The two families stay apart so Art. 6 never links a citation about s. 6.
+    const ARTICLE_WORD = /\b(?:articles?|arts?\.)\s*/gi;
+    const SECTION_WORD = /\b(?:sections?|ss?\.)\s*|§\s*/gi;
+    const ARTICLE_ALTERNATION = "(?:articles?|arts?\\.)\\s*";
+    const SECTION_ALTERNATION = "(?:sections?|ss?\\.|§)\\s*";
+
+    // Mirrored by strip_gloss in lib/citations.py. The trailing bracket of
+    // "Art. 8(1)(a)" belongs to the citation; a gloss is prose, so it holds a space or
+    // runs longer than a subsection label.
+    function stripCitationGloss(reference) {
+      const text = String(reference).trim();
+      const match = text.match(CITATION_GLOSS);
+      if (!match || (!/\s/.test(match[1]) && match[1].length < 5)) return text;
+      return text.slice(0, match.index).trim();
+    }
+
     function citationAliases(citations) {
       const aliases = [];
       const seen = new Set();
@@ -1068,20 +1090,34 @@
       citations.forEach(citation => {
         add(`[${citation.id}]`, citation);
         (citation.references || []).forEach(reference => {
-          add(reference, citation);
-          const provisions = String(reference).match(/(?:s\.|section|Art\.|Article)\s*\d+[\w().-]*(?:\([^)]*\))*?(?:-\([^)]*\))?/gi) || [];
-          provisions.forEach(provision => add(provision, citation));
+          const bare = stripCitationGloss(reference);
+          [String(reference), bare].forEach(candidate => {
+            add(candidate, citation);
+            (candidate.match(CITATION_PROVISION) || []).forEach(provision => add(provision, citation));
+          });
         });
       });
       return aliases.sort((a, b) => b.alias.length - a.alias.length);
+    }
+
+    function citationAliasPattern(alias) {
+      // Park each provision word on a control character first: it survives regex
+      // escaping untouched, so the alternation can be swapped in afterwards.
+      const marked = escapeHtml(alias)
+        .replace(ARTICLE_WORD, "")
+        .replace(SECTION_WORD, "")
+        .replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return new RegExp(
+        marked.split("").join(ARTICLE_ALTERNATION).split("").join(SECTION_ALTERNATION),
+        "gi",
+      );
     }
 
     function linkifyCitations(text, citations) {
       const placeholders = [];
       let result = text;
       citationAliases(citations).forEach(({ alias, citation }) => {
-        const escapedAlias = escapeHtml(alias);
-        const pattern = new RegExp(escapedAlias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
+        const pattern = citationAliasPattern(alias);
         result = result.replace(pattern, visible => {
           const index = placeholders.length;
           placeholders.push(`<button type="button" class="citation-link" data-citation-id="${citation.id}" aria-label="View source ${citation.id}">${visible}</button>`);

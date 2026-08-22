@@ -20,7 +20,7 @@ import re
 from datetime import datetime, timedelta
 
 from lib import llm
-from lib.citations import extract_citations
+from lib.citations import extract_citations, strip_gloss
 from lib.agents import accommodation_agent, documentation_agent, flight_agent
 from lib.rag.routing import EU_EEA_AIRPORTS, ISRAEL_AIRPORTS, US_AIRPORTS
 from lib.tools import airports, flights
@@ -858,7 +858,7 @@ REQUIRED_HEADING = ("Somewhere in your answer the passenger has to see each of t
 SOURCE_DOCUMENTS = ("Aviation Services Law", "Conditions of Carriage",
                     "Contract of Carriage")
 
-# Mirrors the provision pattern inside linkifyCitations (public/index.html). Keep the
+# Mirrors the provision pattern inside citationAliases (public/index.html). Keep the
 # two in step: it decides which strings in the answer become clickable sources.
 PROVISION_RE = re.compile(
     r"(?:s\.|section|Art\.|Article)\s*\d+[\w().-]*(?:\([^)]*\))*?(?:-\([^)]*\))?",
@@ -905,11 +905,13 @@ def _required_tokens(results: dict) -> list[str]:
     # The GUI links a citation's own reference, or a provision inside it, wherever that
     # exact string appears in the answer - and nothing else. "Article 8" on its own does
     # not link; "Art. 8(1)(a)" does, and so does "14 CFR Part 260 § 260.6" whole, which
-    # holds no provision the pattern can find. Ask for the shortest form that works.
+    # holds no provision the pattern can find. Ask for the shortest form that works,
+    # which means dropping the gloss the model tends to attach ("Rule 24 (snacks and
+    # meals)"): no answer ever repeats one, so asking for it wastes the hint.
     linkable: list[str] = []
     for citation in results.get("citations") or []:
         for reference in citation.get("references") or []:
-            reference = str(reference)
+            reference = strip_gloss(reference)
             linkable += PROVISION_RE.findall(reference) or [reference]
     tokens += linkable
 

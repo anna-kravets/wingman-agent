@@ -21,6 +21,8 @@ _BLOCK = re.compile(
     r"(?=\r?\n\r?\n\[S\d+\]|\r?\n\r?\nWrite the grounded draft\.|\Z)"
 )
 
+_GLOSS = re.compile(r"\s*\(([^()]*(?:\([^()]*\)[^()]*)*)\)\s*$")
+
 _FIELDS = {
     "Namespace": "namespace",
     "Document type": "document_type",
@@ -31,8 +33,35 @@ _FIELDS = {
 }
 
 
+def strip_gloss(reference: str) -> str:
+    """Drop the explanatory tail a model attaches to a citation, keeping the citation.
+
+    "Rule 24 (snacks and meals)" becomes "Rule 24", which is the form an answer
+    actually repeats and therefore the only form the GUI can link. The trailing
+    bracket of "Art. 8(1)(a)" is part of the citation, so it stays: a gloss is prose,
+    which means it contains a space or is longer than a subsection label.
+
+    Mirrored by stripCitationGloss in public/index.html.
+    """
+
+    reference = str(reference).strip()
+    match = _GLOSS.search(reference)
+    if not match:
+        return reference
+    inner = match.group(1)
+    if " " not in inner and len(inner) < 5:
+        return reference
+    return reference[:match.start()].strip()
+
+
 def _source_references(payload: dict) -> dict[str, list[str]]:
-    """Human-readable aliases adjacent to each [S#] in the legal assessment."""
+    """Every [S#] the legal assessment cited, with any human-readable alias beside it.
+
+    A cited source with no alias still gets an entry, holding an empty list. The model
+    sometimes writes "source": "[S2], [S3]" and nothing else; those passages have a
+    document, a section, an excerpt and an official URL worth showing, even though
+    there is no phrase in the answer for the GUI to turn into an inline link.
+    """
 
     references: dict[str, list[str]] = {}
     rights = payload if isinstance(payload, dict) else {}
@@ -44,8 +73,9 @@ def _source_references(payload: dict) -> dict[str, list[str]]:
         for index, match in enumerate(matches):
             end = matches[index + 1].start() if index + 1 < len(matches) else len(source)
             label = source[match.end():end].strip(" ;,[]")
-            if label and label not in references.setdefault(match.group(1), []):
-                references[match.group(1)].append(label)
+            aliases = references.setdefault(match.group(1), [])
+            if label and label not in aliases:
+                aliases.append(label)
     return references
 
 
