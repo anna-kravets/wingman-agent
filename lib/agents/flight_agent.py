@@ -1,11 +1,11 @@
 """FlightAgent — onward options after a disruption, grounded in real schedules.
 
-Pattern: role prompt + one-shot example (`docs/PROJECT_PLAN.md` §1). The example
-now shows the model *choosing from* verified candidates rather than inventing
-options, because `lib/tools/flights.py` supplies real departures.
+The role prompt and one-shot example teach the model to choose from verified
+candidates rather than inventing options, because `lib/tools/flights.py` supplies
+real departures.
 
-Scope is deliberately narrow (design doc D5): schedule data cannot answer what
-a ticket allows, so baggage, fare and compensation questions are deferred to
+Scope is deliberately narrow: schedule data cannot answer what a ticket allows,
+so baggage, fare and compensation questions are deferred to
 DocumentationAgent, which can cite the Contract of Carriage clause.
 """
 
@@ -255,7 +255,7 @@ def _validate(payload: dict, request: dict, candidates: list[dict]) -> dict:
 
 
 def run(request: dict, history: list[dict]) -> tuple[dict, list[dict]]:
-    """Returns (payload, steps). See `docs/PROJECT_PLAN.md` §1 for both shapes."""
+    """Return the selected flight payload and its ordered LLM trace."""
     origin, destination = request.get("origin"), request.get("destination")
 
     # Decided offline and free: a route that cannot exist should not cost 8 units

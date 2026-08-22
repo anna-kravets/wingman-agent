@@ -37,8 +37,8 @@ FAILURE_MESSAGES = {
 }
 
 # How many prior turns reach a prompt. History is re-sent on every call of every turn,
-# so an uncapped conversation costs O(n^2) tokens against a $13 project budget
-# (`docs/PROJECT_PLAN.md` §7). Six turns is three exchanges of context.
+# so an uncapped conversation costs O(n^2) tokens. Six turns is three exchanges
+# of context and keeps that cost bounded.
 HISTORY_TURNS = 6
 
 # Three each is what the agents already return at most, and the digest is re-sent to the
@@ -389,8 +389,7 @@ def _prior_results_block(history: list[dict]) -> list[str]:
     Merged per key, most recent turn wins: a flight-only follow-up must not shadow the
     stay found two turns ago, or a third turn re-dispatches AccommodationAgent for a
     room already found and paid for. Only identities, not whole payloads: history is
-    re-sent on every call of every turn, so full payloads would cost O(n^2) tokens
-    against a $13 project budget (`docs/PROJECT_PLAN.md` §7).
+    re-sent on every call of every turn, so full payloads would cost O(n^2) tokens.
     """
     prior: dict = {}
     for turn in history:                       # oldest first, so later turns win per key
@@ -548,7 +547,7 @@ def _conflict_question(conflict: dict) -> str:
 
 
 def _request_from(parsed: dict, follow_up: bool, local_now: str) -> dict:
-    """The model's JSON forced into the locked request shape (`docs/PROJECT_PLAN.md` §1).
+    """Force the model's JSON into the structured request shape used by every agent.
 
     Everything the rest of the system indexes into is set here whatever came back: a
     missing "local_now" crashes the date sync, and an invented "needs" entry would
@@ -1406,7 +1405,7 @@ def _compose(
 
 def run(prompt: str, history: list[dict], *,
         local_time: datetime | None = None) -> tuple[str, list[dict], dict]:
-    """Returns (response_text, steps, results) — see `docs/PROJECT_PLAN.md` §1.
+    """Return the passenger response, ordered LLM trace, and specialist results.
 
     `results` is what each agent came back with, so a follow-up can be answered from
     options already paid for instead of re-dispatching for them.

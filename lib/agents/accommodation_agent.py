@@ -1,13 +1,13 @@
 """AccommodationAgent — stays for exactly the nights the new itinerary strands the passenger.
 
-Pattern: role prompt + one-shot example (`docs/PROJECT_PLAN.md` §1), now choosing
-from real hotels supplied by `lib/tools/hotels.py`.
+The role prompt and one-shot example teach the model to choose from real properties
+supplied by `lib/tools/hotels.py`.
 
 `stay_window` is the point of the date sync: the Supervisor derives the nights
 from the flight FlightAgent actually found, so this agent never guesses them.
 
 OpenStreetMap knows a hotel's name and where it is and rarely anything else, so
-price and meals are estimates and must be labelled as such (design doc D8).
+price and meals are estimates and must be labelled as such.
 """
 
 import json
@@ -217,7 +217,7 @@ def _validate(payload: dict, stay_window: dict, candidates: list[dict]) -> dict:
 
 
 def run(request: dict, stay_window: dict, history: list[dict]) -> tuple[dict, list[dict]]:
-    """Returns (payload, steps). See `docs/PROJECT_PLAN.md` §1 for both shapes."""
+    """Return the selected stay payload and its ordered LLM trace."""
     candidates = hotels.search(request.get("stranded_at"))
 
     if not candidates:

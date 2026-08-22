@@ -392,13 +392,38 @@ def test_agent_info_has_the_required_fields():
         # any written description. This is the description.
         assert module in body["description"]
 
+    description = body["description"]
+    for source in ("AeroDataBox", "OpenStreetMap", "EU/EEA", "US", "Israel"):
+        assert source in description
+    for boundary in (
+        "Flight prices are estimates",
+        "seat availability",
+        "Hotel prices are estimates",
+        "room availability",
+        "does not book",
+        "not legal advice",
+    ):
+        assert boundary in description
+
+    template = body["prompt_template"]
+    for detail in (
+        "Scheduled departure",
+        "Airline explanation",
+        "What the airline offered",
+        "Important constraints",
+    ):
+        assert detail in template["template"]
+    assert template["example"] == body["prompt_examples"][0]["prompt"]
+
     assert len(body["prompt_examples"]) == 1
     example = body["prompt_examples"][0]
     assert set(example) == {"prompt", "full_response", "steps"}
     assert example["prompt"].startswith("Lufthansa flight LH318")
-    assert "ONWARD FLIGHT" in example["full_response"]
-    assert "CHECKED BAGS" in example["full_response"]
-    assert len(example["steps"]) == 8
+    assert "**Flight**" in example["full_response"]
+    assert "**Where to sleep**" in example["full_response"]
+    assert "**What you are owed**" in example["full_response"]
+    assert "**Bags:**" in example["full_response"]
+    assert len(example["steps"]) == 7
     assert [step["module"] for step in example["steps"]] == [
         "Supervisor",
         "FlightAgent",
@@ -407,13 +432,13 @@ def test_agent_info_has_the_required_fields():
         "DocumentationAgent",
         "DocumentationAgent",
         "Supervisor",
-        "Supervisor",
     ]
     for step in example["steps"]:
         assert set(step) == {"module", "prompt", "response"}
         assert set(step["prompt"]) == {"system_prompt", "user_prompt"}
         assert step["prompt"]["system_prompt"]
         assert step["prompt"]["user_prompt"]
+    assert example["steps"][-1]["response"]["text"] == example["full_response"]
 
 
 def test_model_architecture_returns_a_png():
