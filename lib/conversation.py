@@ -1,9 +1,12 @@
+import logging
 import os
 from datetime import UTC, datetime
 
 from supabase import Client, create_client
 
 from lib.citations import citations_from_results
+
+logger = logging.getLogger(__name__)
 
 _client: Client | None = None
 
@@ -60,9 +63,65 @@ def save_history(
     ).execute()
 
 
-def _messages(history: object) -> list[dict]:
+def save_steps(
+    owner_id: str, conversation_id: str, turn_index: int, steps: list[dict]
+) -> None:
+    """Persist one turn's execution trace.
+
+    Kept out of `save_history` on purpose. The trace lives in its own table because
+    `history` is read in full on the agent path and a trace is far larger than the
+    turn it describes; and because a failure here must never cost the passenger their
+    conversation, so the caller guards the two writes separately.
+    """
+    if not _is_configured() or not steps:
+        return
+    _get_client().table("conversation_traces").upsert(
+        {
+            "owner_id": owner_id,
+            "conversation_id": conversation_id,
+            "turn_index": turn_index,
+            "steps": steps,
+        },
+        on_conflict="owner_id,conversation_id,turn_index",
+    ).execute()
+
+
+def _traces(owner_id: str, conversation_ids: list[str]) -> dict[str, dict[int, list]]:
+    """Every stored trace for these conversations, as {conversation_id: {turn: steps}}.
+
+    Best-effort by design: the trace is a debugging and demo affordance, so a missing
+    table (the migration not run yet) or a failed read must degrade to conversations
+    without an "Execution details" panel, not to a 503 on the whole listing.
+    """
+    if not conversation_ids:
+        return {}
+    try:
+        res = (
+            _get_client()
+            .table("conversation_traces")
+            .select("conversation_id,turn_index,steps")
+            .eq("owner_id", owner_id)
+            .in_("conversation_id", conversation_ids)
+            .execute()
+        )
+    except Exception:
+        logger.exception("Conversation traces could not be loaded; listing without them")
+        return {}
+
+    traces: dict[str, dict[int, list]] = {}
+    for row in res.data or []:
+        steps = row.get("steps")
+        if isinstance(steps, list) and steps:
+            traces.setdefault(row.get("conversation_id"), {})[row.get("turn_index")] = steps
+    return traces
+
+
+def _messages(history: object, traces: dict[int, list] | None = None) -> list[dict]:
+    traces = traces or {}
     messages: list[dict] = []
-    for turn in history if isinstance(history, list) else []:
+    # Indexed over the raw list, so the position matches the `turn_index` save_steps
+    # stored - a turn skipped below would otherwise shift every later trace by one.
+    for index, turn in enumerate(history if isinstance(history, list) else []):
         if not isinstance(turn, dict):
             continue
         prompt = turn.get("prompt")
@@ -74,6 +133,9 @@ def _messages(history: object) -> list[dict]:
             citations = citations_from_results(turn.get("results"))
             if citations:
                 message["citations"] = citations
+            steps = traces.get(index)
+            if steps:
+                message["steps"] = steps
             messages.append(message)
     return messages
 
@@ -91,9 +153,13 @@ def list_conversations(owner_id: str, limit: int = 30) -> list[dict]:
         .execute()
     )
 
+    rows = [row for row in res.data or [] if isinstance(row, dict)]
+    traces = _traces(owner_id, [row.get("conversation_id") for row in rows
+                                if row.get("conversation_id")])
+
     conversations = []
-    for row in res.data or []:
-        history = row.get("history") if isinstance(row, dict) else []
+    for row in rows:
+        history = row.get("history")
 
         conversations.append(
             {
@@ -101,7 +167,7 @@ def list_conversations(owner_id: str, limit: int = 30) -> list[dict]:
                 "title": row.get("title") or "New conversation",
                 "createdAt": row.get("created_at"),
                 "updatedAt": row.get("updated_at"),
-                "messages": _messages(history),
+                "messages": _messages(history, traces.get(row.get("conversation_id"))),
             }
         )
     return conversations
@@ -118,3 +184,17 @@ def delete_conversation(owner_id: str, conversation_id: str) -> None:
         .eq("conversation_id", conversation_id)
         .execute()
     )
+    # After the conversation itself, and best-effort: the passenger asked for the
+    # conversation to be gone, and it is. An orphaned trace must not turn that into
+    # a failure they see.
+    try:
+        (
+            _get_client()
+            .table("conversation_traces")
+            .delete()
+            .eq("owner_id", owner_id)
+            .eq("conversation_id", conversation_id)
+            .execute()
+        )
+    except Exception:
+        logger.exception("Conversation traces could not be deleted for %s", conversation_id)

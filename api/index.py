@@ -228,6 +228,13 @@ async def execute(request: Request, response: Response):
             )
         except Exception:
             logger.exception("Conversation history save failed; returning the agent response")
+        # Stored separately, and guarded separately: the trace is a debugging and demo
+        # affordance, the conversation is the product. `history` here is still the
+        # turns that came before, so its length is the new turn's index.
+        try:
+            conversation.save_steps(owner_id, conversation_id, len(history), steps)
+        except Exception:
+            logger.exception("Conversation trace save failed; returning the agent response")
 
     return {
         "status": "ok",

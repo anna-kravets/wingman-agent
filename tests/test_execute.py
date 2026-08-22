@@ -227,6 +227,56 @@ def test_stored_citations_are_restored_with_the_assistant_message():
     assert messages[1]["citations"] == [citation]
 
 
+def test_stored_steps_are_restored_with_the_assistant_message():
+    steps = [make_step("Supervisor", "system", "user", {"text": "drafted"})]
+
+    messages = conversation._messages(
+        [{"prompt": "first", "response": "first answer"},
+         {"prompt": "second", "response": "second answer"}],
+        {1: steps},
+    )
+
+    assert "steps" not in messages[1]
+    assert messages[3]["steps"] == steps
+
+
+def test_a_turns_trace_is_stored_under_its_own_index(monkeypatch):
+    """The regression this exists for: a trace reached the browser in the /api/execute
+    response and nowhere else, so any turn whose response the browser missed lost its
+    "Execution details" for good once the server copy synced back over it."""
+    store = {"c1": [{"prompt": "earlier", "response": "earlier answer"}]}
+    saved = {}
+
+    monkeypatch.setattr(conversation, "load_history",
+                        lambda o, c: list(store.get(c, [])))
+    monkeypatch.setattr(conversation, "save_history",
+                        lambda o, c, history, title: store.__setitem__(c, history))
+    monkeypatch.setattr(conversation, "save_steps",
+                        lambda o, c, turn_index, steps: saved.__setitem__(turn_index, steps))
+    monkeypatch.setattr(
+        supervisor, "run",
+        lambda prompt, history, *, local_time=None: ("ok", [make_step("Supervisor", "s", "u", {})], {}),
+    )
+
+    client.post("/api/execute", json={"prompt": COMPLETE, "conversation_id": "c1"})
+
+    assert list(saved) == [1], "the new turn's trace must be stored under its own index"
+    assert conversation._messages(store["c1"], saved)[3]["steps"] == saved[1]
+
+
+def test_a_failed_trace_save_does_not_lose_the_answer(monkeypatch):
+    monkeypatch.setattr(conversation, "load_history", lambda o, c: [])
+    monkeypatch.setattr(conversation, "save_history", lambda o, c, history, title: None)
+    monkeypatch.setattr(conversation, "save_steps",
+                        lambda *args: (_ for _ in ()).throw(RuntimeError("table missing")))
+
+    body = client.post("/api/execute",
+                       json={"prompt": COMPLETE, "conversation_id": "c1"}).json()
+
+    assert body["status"] == "ok"
+    assert body["steps"]
+
+
 def test_results_from_one_turn_reach_the_next_turns_prompt(monkeypatch, fake_search_data):
     # test_the_agents_results_are_stored_on_the_turn proves storage with supervisor.run
     # faked out; test_supervisor.py proves prior results reach a prompt with history

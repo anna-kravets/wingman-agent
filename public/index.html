@@ -837,7 +837,7 @@
               return localMessage?.role === message.role && localMessage?.content === message.content
                 ? {
                     ...message,
-                    steps: localMessage.steps,
+                    steps: localMessage.steps || message.steps,
                     citations: message.citations || localMessage.citations,
                     createdAt: localMessage.createdAt,
                   }
