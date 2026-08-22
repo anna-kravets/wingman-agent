@@ -200,16 +200,27 @@ Completeness is part of correctness. Do not silently compress away a finding:
   labelled "Recommended" in the findings is the recovery plan. Never call a different, near-departure
   flight the "earliest reasonable replacement", never tell the passenger to push for it first, and
   never undo the deterministic recommendation in your prose. It may be mentioned only as an urgent
-  possibility that is unsafe to rely on until confirmed.
+  possibility that is unsafe to rely on until confirmed. Where a flight carries a note about how
+  hard it is to rebook onto - the same airline being simpler than a new one - keep it: that is the
+  difference between a queue they can join now and a booking they have to negotiate.
 - For each sleep option shown, keep its name, distance, rough price range, property type, and what is
-  or is not known about meals and availability. A passenger asking for suggestions needs the prices
-  in the first answer, not only after asking for a comparison. Check-in/check-out are requested stay
-  dates, not proof of room availability: never label those dates "Availability" and always say that
-  actual room availability was not checked or confirmed.
+  or is not known about meals and availability. Every price is an estimate, never a quote - say so
+  once. Where a property comes with a phone number, give them that number and tell them to ring it:
+  nobody has held a room for them, and that call is the only way they can find out. A passenger
+  asking for suggestions needs the prices in the first answer, not only after asking for a
+  comparison. Check-in/check-out are requested stay dates, not proof of room availability: never
+  label those dates "Availability" and always say that actual room availability was not checked or
+  confirmed.
 - Cover every entitlement listed under "What you are owed". Preserve exact payment deadlines,
   monetary amounts, important exceptions, the human-readable document/law named in its source,
   and its supplied section/article references. If the findings say a requested topic such as
   baggage was not established, say that too.
+- Keep every step listed under "Next" as a step of its own. Do not merge two into one and do not
+  drop the last ones because the list is getting long - the step that files the written compensation
+  claim is the one that actually gets them paid, and it is always the easiest to lose.
+- Put every line of any "Things I need from you" block to them as a direct question, and end on
+  those questions. Each one is something only they can answer and nothing else in the plan settles.
+  Never replace them with a general offer to help further.
 - An evidence gap means "the supplied sources did not establish this", not "you have no right".
   Never turn a missing baggage passage into a categorical statement that baggage creates no remedy.
 - If the passenger says checked bags are still with the airline, give one practical baggage action:
@@ -235,8 +246,12 @@ State amounts and entitlements only where the findings support them, and say whi
 from. Where something could not be finished, say plainly what is missing rather than papering over it.
 
 Anything under "Before you act on this" goes ahead of your recommendation, not after it - and only if
-you have not already told them. If there is a "Things I need from you" block, close on it as a direct
-question instead of the general invitation.
+you have not already told them.
+
+If you are given a "Timing conflict" line, the flight you are recommending and the room you are
+recommending cannot both be right. Say so in the same breath as the room, naming that flight: the
+room only matters if they are not on it. Never hand them a flight leaving today and a bed for tonight
+as though the two sit together. This is not a footnote and not an afterthought at the end.
 
 State each assumption you are given, in your own words, so the passenger can correct it - but only
 the ones you have not already told them earlier in this conversation.
@@ -247,7 +262,10 @@ say that the entitlements at that end may be incomplete. Do not bury it at the e
 it away. Say it once, in your own words.
 
 End by inviting a follow-up: the passenger can compare options or ask about the terms of any one of
-them. Skip that invitation if you already gave it and nothing about the plan has changed since.
+them. Skip that invitation if you already gave it and nothing about the plan has changed since - and
+skip it whenever there is a "Things I need from you" block, because those questions are the ending
+instead. Never write both: a general "let me know if you want anything else" in place of the specific
+thing you actually need from them is the one ending that wastes their next message.
 """
 
 COMPOSE_REPAIR_SYSTEM_PROMPT = COMPOSE_SYSTEM_PROMPT + """
@@ -715,6 +733,27 @@ def _coverage_warning(request: dict) -> str | None:
             "at that end of the route may be incomplete or inaccurate.")
 
 
+# The words a caveat uses for a property kind AccommodationAgent ranked but the digest
+# cap then cut. Advice to prefer a hotel over the hostel is worse than useless once the
+# hostel is not on the page: gpt-5.4-mini turned the dangling reference into "For 2
+# guests, these are the three hotel-style options shown" - a comparison the passenger
+# cannot see. Kinds come from `lib/tools/hotels.py`.
+KIND_WORDS = {
+    "hostel": ("hostel",),
+    "guest_house": ("guest house", "guesthouse", "guest_house"),
+    "apartment": ("apartment", "apartments"),
+    "motel": ("motel",),
+}
+
+
+def _dangling(caveat: str, shown: list[dict], every: list[dict]) -> bool:
+    """Whether a stay caveat only talks about options the cap removed."""
+    lowered = caveat.lower()
+    cut = {str(o.get("kind") or "") for o in every} - {str(o.get("kind") or "") for o in shown}
+    return any(word in lowered
+               for kind in cut for word in KIND_WORDS.get(kind, ()))
+
+
 def _split_caveats(results: dict) -> dict[str, list[str]]:
     """Search-agent caveats, routed by prefix and stripped of it.
 
@@ -722,9 +761,13 @@ def _split_caveats(results: dict) -> dict[str, list[str]]:
     for, while the ones that matter are generated in code and always carry it.
     """
     routed = {prefix: [] for prefix, _ in CAVEAT_BLOCKS}
+    stay = results.get("stay") or {}
+    shown, every = _options(stay), [o for o in (stay.get("options") or []) if isinstance(o, dict)]
     for key in ("flight", "stay"):
         for caveat in (results.get(key) or {}).get("caveats") or []:
             text = str(caveat).strip()
+            if key == "stay" and _dangling(text, shown, every):
+                continue
             prefix = next(
                 (p for p, _ in CAVEAT_BLOCKS if text.upper().startswith(p)), None
             )
@@ -840,8 +883,18 @@ def _required_tokens(results: dict) -> list[str]:
     for option in _options(results.get("flight")):
         if option.get("flight_number"):
             tokens.append(str(option["flight_number"]))
+        # Departure times survive composition on their own; arrival times only did for
+        # the recommended flight, leaving the backups as departures with no landing time
+        # - the one figure that decides whether a backup is any use. Cheap to ask for:
+        # this list costs nothing but prompt tokens, unlike a guard, which costs a call.
+        if option.get("arrive"):
+            tokens.append(str(option["arrive"])[11:16])
 
     for option in _options(results.get("stay")):
+        # The number a passenger has to ring to confirm a room the search could not
+        # confirm. AccommodationAgent's own ASK caveat tells them to call it.
+        if option.get("phone"):
+            tokens.append(str(option["phone"]))
         if option.get("name"):
             tokens.append(str(option["name"]))
         price = str(option.get("price_estimate") or "")
@@ -895,6 +948,8 @@ def _compose_prompt(request: dict, digest: str, history: list[dict],
         lines += [""] + prior
     if request.get("coverage_warning"):
         lines += ["", request["coverage_warning"]]
+    if request.get("stay_conflict"):
+        lines += ["", f"Timing conflict: {request['stay_conflict']}"]
     if request.get("assumptions"):
         lines += ["", "Assumptions behind this (see the system prompt for when to mention one):"]
         lines += [f"  - {a}" for a in request["assumptions"]]
@@ -1020,19 +1075,12 @@ def _composition_issues(text: str, request: dict, results: dict) -> list[str]:
         if number and not _has_any(text, (str(number),)):
             issues.append(f"flight option {number}")
 
-    recommended_flight = _recommended(flight_payload)
-    if recommended_flight and recommended_flight.get("flight_number"):
-        compact = _compact(text)
-        number = _compact(recommended_flight["flight_number"])
-        position = compact.find(number)
-        recommendation_words = tuple(_compact(word) for word in
-                                     ("recommended", "reasonable option", "primary plan",
-                                      "best option", "best fallback", "plan around"))
-        if position < 0 or not any(
-                word in compact[max(0, position - 180):position + len(number) + 180]
-                for word in recommendation_words):
-            issues.append(f"clear recommendation of {recommended_flight['flight_number']}")
-
+    # There is deliberately no check that the recommended flight is *described* as the
+    # recommendation. It was a window search for one of six literal phrases, and a draft
+    # opening "LH 687 is the best same-day replacement." failed it - a pure false
+    # positive on the only real sample we have. The dangerous case, pushing a
+    # near-departure flight the passenger cannot actually board, is caught structurally
+    # just below and is a misleading issue, not a wording one.
     flight_caveats = " ".join(str(c) for c in flight_payload.get("caveats") or [])
     if "urgent possibility" in flight_caveats.lower():
         lowered = text.lower()
@@ -1133,13 +1181,23 @@ def _composition_issues(text: str, request: dict, results: dict) -> list[str]:
     rights_caveats = " ".join(str(c) for c in rights.get("caveats") or [])
     if "applicab" in rights_caveats.lower():
         lowered = text.lower()
-        # What has to survive is the concession, not the word "applicability". A composer
-        # told to drop regulation-speak writes "which rules apply here is not certain",
-        # and rejecting that costs the passenger the whole composed answer.
-        hedged = any(word in lowered for word in (
-            "uncertain", "not certain", "unclear", "not clear", "depends",
-            "may apply", "might apply", "not established", "cannot confirm", "can't confirm"))
-        if not re.search(r"\bappl(?:y|ies|icable|icability)\b", lowered) or not hedged:
+        # What has to survive is the concession, not the word "applicability". Requiring
+        # an appl* word *and* a hedge rejected five of six plausible, correct renderings
+        # ("It is not certain that European rules cover this flight"), and a free-floating
+        # hedge passed on wording that conceded nothing - conv1's "if that does not clear,
+        # LY 357" satisfied it by accident. Ask instead for doubt stated near the
+        # regulation itself. This gates a paid repair now, so a false positive costs money.
+        uncertainty = (
+            "uncertain", "not certain", "unclear", "not clear", "depends", "may apply",
+            "might apply", "may not", "might not", "not established", "cannot confirm",
+            "can't confirm", "cannot say", "not confirmed", "unconfirmed", "probable",
+            "likely", "not guaranteed", "assuming", "if these", "if those",
+        )
+        hedged = any(
+            any(word in lowered[max(0, m.start() - 200):m.end() + 200] for word in uncertainty)
+            for m in re.finditer(r"eu\s*261|european|\beu\b", lowered)
+        )
+        if not hedged:
             issues.append("the EU 261 applicability caveat")
 
     party_size = request.get("party_size")
@@ -1156,12 +1214,26 @@ def _composition_issues(text: str, request: dict, results: dict) -> list[str]:
                 f"party size is {party_size}, not {', '.join(map(str, wrong))}"
             )
 
-    for assumption in request.get("assumptions") or []:
-        if str(assumption).startswith("Hotel options assume"):
-            number = re.search(r"\b[A-Z0-9]{2}\s*\d{1,4}\b", str(assumption))
-            has_branch = _has_any(text, ("not taking", "if you do not take", "if you don't take"))
-            if not has_branch or (number and not _has_any(text, (number.group(0),))):
-                issues.append("the same-day-flight assumption behind the hotel search")
+    # Recommending a flight that leaves today and a room for tonight in the same answer
+    # is a contradiction, and the passenger is the one who has to notice it. Checking for
+    # three literal phrasings ("not taking", "if you do not take", "if you don't take")
+    # rejected five of six correct renderings. What actually has to be true is structural:
+    # the flight and the bed have to be reconciled in one breath, in whatever words.
+    if request.get("stay_conflict"):
+        match = re.search(r"\b[A-Z0-9]{2}\s*\d{1,4}\b", str(request["stay_conflict"]))
+        pattern = r"\s*".join(map(re.escape, match.group(0).split())) if match else None
+        # One sentence, not a proximity window. A window of 200 characters passed conv1's
+        # own broken answer twice: on "stay checked through to the replacement flight"
+        # (baggage, and "stay" is a verb there) and on two adjacent numbered actions,
+        # "confirm LH 687 immediately" followed by "ask for hotel tonight". Sitting near
+        # each other in a list is not reconciling them.
+        linked = pattern and any(
+            re.search(pattern, sentence, re.IGNORECASE)
+            and re.search(r"\b(?:hotel|room|bed|sleep|overnight|night|accommodation)",
+                          sentence, re.IGNORECASE)
+            for sentence in re.split(r"(?<=[.!?])\s+|\n+", text))
+        if not linked:
+            issues.append("the same-day-flight assumption behind the hotel search")
 
     # Deliberately lenient: this asks for the uncovered airport plus any wording that
     # concedes a limit, not one fixed sentence. A guard strict enough to reject a
@@ -1178,25 +1250,24 @@ def _composition_issues(text: str, request: dict, results: dict) -> list[str]:
     return list(dict.fromkeys(issues))
 
 
+COVERAGE_ISSUE = "the coverage limit on this route"
+
 # Leaving a fact out and stating something untrue are not the same failure. Only these
 # can send the passenger to act on a wrong belief - a room that was never held, a flight
-# with no seat, a right they are told they do not have. Everything else the guard finds
-# is an omission: the answer is true, just short, and a footnote fixes it.
+# with no seat, a right they are told they do not have. These are the only issues whose
+# survival is worth throwing away readable prose for.
 MISLEADING_ISSUES = (
     "unsafe recommendation of urgent flight",
     "confirmation that the urgent flight has seats and is still boardable",
     "stay dates must not be labelled as room availability",
     "non-categorical wording for the baggage evidence gap",
     "party size is",
+    # Silence about either of these reads as a complete answer, which is the wrong
+    # belief exactly: a room the passenger thinks is held, and entitlements at an
+    # airport whose rules we do not hold. `_coverage_warning` exists for that reason.
+    "room availability is not confirmed",
+    COVERAGE_ISSUE,
 )
-
-MISSING_HEADING = "**Also from your findings**"
-
-COVERAGE_ISSUE = "the coverage limit on this route"
-
-
-def _misleading(issues: list[str]) -> list[str]:
-    return [issue for issue in issues if issue.startswith(MISLEADING_ISSUES)]
 
 
 def _provenance(issue: str) -> bool:
@@ -1204,26 +1275,26 @@ def _provenance(issue: str) -> bool:
     return issue.endswith(" citation") or issue.endswith(" source")
 
 
-def _with_missing(draft: str, issues: list[str], request: dict) -> str:
-    """Append what the prose dropped rather than discarding the prose.
+def _buys_repair(issues: list[str]) -> list[str]:
+    """Worth one more composing call. Any real omission qualifies.
 
-    A true, readable answer missing one figure is worth far more to a passenger at a
-    gate than a complete dump of the raw findings. The issue labels name their own
-    fact ("the 21-day deadline"), so they can be shown as written - except the
-    coverage limit, whose label hides the very airport the passenger needs to see.
-
-    Provenance omissions are dropped rather than shown. "section 6 citation" is a note
-    to ourselves, not something a passenger stranded at a gate can do anything with,
-    and the required-token hint now works to keep the reference in the prose where it
-    belongs - and where the GUI can turn it into a source link.
+    Provenance is not one: "section 6 citation" is a note to ourselves, and the
+    required-token hint already keeps the reference in the prose where the GUI can
+    link it.
     """
-    warning = request.get("coverage_warning")
-    lines = [warning if issue == COVERAGE_ISSUE and warning else issue
-             for issue in issues if not _provenance(issue)]
-    if not lines:
-        return draft
-    return "\n\n".join([draft, "---", MISSING_HEADING,
-                        "\n".join(f"- {line}" for line in lines)])
+    return [issue for issue in issues if not _provenance(issue)]
+
+
+def _must_fall_back(issues: list[str]) -> list[str]:
+    """Worth throwing away the repaired prose for. Only the misleading ones.
+
+    Split out of a single `_misleading` predicate that decided both this and whether
+    to buy a repair at all. Conflating them meant a guard reading for the wrong words
+    could dump a passenger to the flat digest over prose that was already correct, so
+    every omission bought a footnote instead - and the footnote was the bug. Now any
+    omission buys the repair, and only a surviving falsehood costs the prose.
+    """
+    return [issue for issue in issues if issue.startswith(MISLEADING_ISSUES)]
 
 
 def _repair_prompt(original_prompt: str, draft: str, issues: list[str]) -> str:
@@ -1271,6 +1342,8 @@ def _compose(
                        + "\n\n" + safe_digest)
     # Above everything, assumptions included: a passenger reading the flat fallback
     # must hit the limits of the answer before the answer itself.
+    if request.get("stay_conflict"):
+        safe_digest = request["stay_conflict"] + "\n\n" + safe_digest
     if request.get("coverage_warning"):
         safe_digest = request["coverage_warning"] + "\n\n" + safe_digest
     if re.search(r"\b(?:bags?|baggage)\b",
@@ -1296,14 +1369,16 @@ def _compose(
     draft = (text or "").strip()
     if not draft:
         return safe_digest, [step]
-    issues = _composition_issues(draft, request, results)
+    issues = _buys_repair(_composition_issues(draft, request, results))
     if not issues:
         return draft, [step]
-    if not _misleading(issues):
-        return _with_missing(draft, issues, request), [step]
 
-    # Pay for a second composition only when the first said something that could
-    # mislead. This is a bounded repair, not an open-ended reflection loop.
+    # Anything the draft actually dropped buys one more composing call. This used to
+    # buy a bulleted footnote of the guard's own internal labels instead - "the EU 261
+    # applicability caveat", "clear recommendation of LH 687" - stapled under a rule and
+    # a heading. The facts behind those labels are real and belong in the passenger's
+    # answer in plain language, which is what the repair is for. Bounded at one extra
+    # call, not an open-ended reflection loop.
     try:
         repaired, repair_step = llm.call(
             MODULE,
@@ -1316,11 +1391,12 @@ def _compose(
 
     repaired = (repaired or "").strip()
     if repaired:
-        remaining = _composition_issues(repaired, request, results)
-        if not remaining:
+        # Only a surviving falsehood is worth the prose. An omission that outlived the
+        # repair usually means the guard is reading for words the composer had no reason
+        # to choose, and trading a readable answer for a flat digest over that costs the
+        # passenger far more than the missing line does.
+        if not _must_fall_back(_composition_issues(repaired, request, results)):
             return repaired, [step, repair_step]
-        if not _misleading(remaining):
-            return _with_missing(repaired, remaining, request), [step, repair_step]
     # Two calls in and it still says something untrue. The flat digest is far less
     # elegant, but it is grounded, and a misleading answer is worse than an ugly one.
     return safe_digest, [step, repair_step]
@@ -1414,9 +1490,11 @@ def run(prompt: str, history: list[dict], *,
         explicit_stay = _explicit_stay_requested(request) or needs == ["stay"]
         if not stay_window and explicit_stay:
             stay_window = _tonight_window(request, known_flight)
-            assumption = _same_day_flight_assumption(request, known_flight)
-            if assumption and assumption not in request["assumptions"]:
-                request["assumptions"].append(assumption)
+            # Its own field, not one more line in `assumptions`. A generic assumption gets
+            # one soft mention in the system prompt and the composer duly dropped this one;
+            # `coverage_warning`, the same class of must-say fact, gets a named prompt line,
+            # a dedicated paragraph and a place above the fallback digest, and survives.
+            request["stay_conflict"] = _same_day_flight_assumption(request, known_flight)
         if stay_window:
             dispatch("stay", accommodation_agent.run, request, stay_window)
 

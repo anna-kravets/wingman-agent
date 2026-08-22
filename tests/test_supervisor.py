@@ -1209,11 +1209,14 @@ def test_an_explicit_hotel_request_on_the_first_turn_is_not_lost_among_other_nee
     assert "Onward flight departs: None" in asked
 
 
-def test_dropped_prices_and_legal_details_are_appended_not_paid_for_twice(monkeypatch):
+def test_dropped_prices_and_legal_details_are_rewritten_into_the_prose(monkeypatch):
     """Facts reaching the prompt is not enough; they must survive delivery.
 
-    An omission is not a reason to throw away a true, readable answer. The passenger
-    keeps the prose and gets the dropped facts under it, and no second call is paid for.
+    They used to be stapled under the answer as a bulleted "Also from your findings"
+    list of the guard's own internal labels - "the 21-day deadline" is a note to
+    ourselves, not a sentence a passenger at a gate can act on. An omission now buys one
+    more composing call so the fact lands in the body, in plain language, and the
+    passenger never sees a section like that.
     """
     results = {
         "stay": {
@@ -1236,7 +1239,10 @@ def test_dropped_prices_and_legal_details_are_appended_not_paid_for_twice(monkey
         },
     }
     lossy = "**Airport Plaza** is nearby. A refund may be available."
-    monkeypatch.setattr(supervisor.llm, "call", _answers_with([lossy]))
+    complete = ("**Airport Plaza** is nearby, roughly EUR 90-150 for the night, and room "
+                "availability is not confirmed. A refund must be paid within 21 days of "
+                "your written request under the Aviation Services Law s.6(a)(2).")
+    monkeypatch.setattr(supervisor.llm, "call", _answers_with([lossy, complete]))
     request = {
         "airline": "LH", "flight_number": "LH318", "origin": "TLV",
         "destination": "FRA", "disruption": "cancelled", "party_size": 2,
@@ -1245,19 +1251,43 @@ def test_dropped_prices_and_legal_details_are_appended_not_paid_for_twice(monkey
 
     text, steps = supervisor._compose(request, results, [], [])
 
-    # One call: an omission must not buy a second composition.
+    # Two calls: the omission bought the rewrite that put the facts in the body.
+    assert len(steps) == 2
+    assert text == complete
+    # The passenger reads sentences, never the guard's labels under a heading.
+    assert "Also from your findings" not in text
+    for label in ("the 21-day deadline", "Airport Plaza price bound 150",
+                  "room availability is not confirmed", "Aviation Services Law source"):
+        assert f"- {label}" not in text
+
+
+def test_provenance_alone_never_buys_a_second_composition(monkeypatch):
+    """"section 6 citation" is a note to ourselves, not something a passenger can act on.
+
+    It used to be filtered out of the appended block; now it must not even reach the
+    repair, or every answer pays twice for a label nobody was ever going to read.
+    """
+    results = {"rights": {
+        "regulation": "multiple",
+        "entitlements": [{"kind": "refund", "summary": "You can ask for a refund.",
+                          "source": "[S3] Aviation Services Law s.6(a)(2)",
+                          "confidence": "high"}],
+        "next_actions": [], "caveats": [],
+    }}
+    draft = "You can ask for a refund under the Aviation Services Law."
+    monkeypatch.setattr(supervisor.llm, "call", _answers_with([draft]))
+
+    text, steps = supervisor._compose({"_passenger_prompt": "Help."}, results, [], [])
+
+    assert supervisor._composition_issues(draft, {}, results) == ["section 6 citation"]
+    assert supervisor._buys_repair(["section 6 citation"]) == []
     assert len(steps) == 1
-    assert text.startswith(lossy)
-    assert supervisor.MISSING_HEADING in text
-    for dropped in ("the 21-day deadline", "Airport Plaza price bound 150",
-                    "room availability is not confirmed"):
-        assert dropped in text
-    # Provenance stays out of the passenger's half of the answer.
-    assert "Aviation Services Law source" not in text
+    assert text == draft
 
 
 def test_an_answer_that_would_mislead_the_passenger_still_buys_a_repair(monkeypatch):
-    """Getting a fact wrong is not the same as leaving one out - only this pays twice."""
+    """Getting a fact wrong is not the same as leaving one out - only this can cost the
+    prose. Both buy a repair; only a surviving falsehood falls back to the findings."""
     request = {"party_size": 2, "_passenger_prompt": "I am travelling with one child."}
     wrong = "I found one room for all 3 of you."
     fixed = "I found one room for the 2 of you."
@@ -1267,7 +1297,30 @@ def test_an_answer_that_would_mislead_the_passenger_still_buys_a_repair(monkeypa
 
     assert len(steps) == 2
     assert text == fixed
-    assert supervisor.MISSING_HEADING not in text
+    assert "Also from your findings" not in text
+
+
+def test_an_omission_surviving_the_repair_ships_the_prose_not_the_digest(monkeypatch):
+    """A guard reading for words the composer had no reason to choose must not cost the
+    passenger a readable answer. Only `MISLEADING_ISSUES` are worth the flat digest."""
+    results = {"rights": {
+        "regulation": "multiple",
+        "entitlements": [{"kind": "refund",
+                          "summary": "Reimbursement is paid within 21 days.",
+                          "source": "[S3] Aviation Services Law s.6(a)(2)",
+                          "confidence": "high"}],
+        "next_actions": [], "caveats": [],
+    }}
+    short = "You can ask Lufthansa for your money back under the Aviation Services Law."
+    monkeypatch.setattr(supervisor.llm, "call", _answers_with([short, short]))
+
+    text, steps = supervisor._compose({"_passenger_prompt": "Help."}, results, [], [])
+
+    remaining = supervisor._composition_issues(short, {}, results)
+    assert "the 21-day deadline" in remaining
+    assert supervisor._must_fall_back(remaining) == []
+    assert len(steps) == 2
+    assert text == short
 
 
 def test_a_falsehood_surviving_the_repair_falls_back_to_the_findings(monkeypatch):
@@ -1336,21 +1389,44 @@ def test_the_composing_prompt_asks_for_the_article_a_right_comes_from():
     assert "Article 14" in required
 
 
-def test_a_missing_citation_is_not_reported_to_the_passenger_as_jargon():
-    """"section 6 citation" is a note to ourselves. It is not something a passenger
-    stranded at a gate can act on, and it used to be printed at them verbatim."""
-    draft = "You can ask for a refund."
+def test_the_two_routing_predicates_disagree_on_purpose():
+    """One predicate used to decide both "buy a repair" and "throw the prose away".
 
-    only_provenance = supervisor._with_missing(
-        draft, ["section 6 citation", "Article 8 citation",
-                "Contract of Carriage source"], {})
-    mixed = supervisor._with_missing(
-        draft, ["Article 8 citation", "the 21-day deadline"], {})
+    Conflating them is why every omission got a footnote: promoting an omission so it
+    could be rewritten also opted it into dumping the passenger to the flat digest when
+    a lexical guard misread the rewrite. Splitting them is the whole fix.
+    """
+    omission = "the 21-day deadline"
+    falsehood = "party size is 2, not 3"
+    provenance = ["section 6 citation", "Article 8 citation", "Contract of Carriage source"]
 
-    assert only_provenance == draft
-    assert supervisor.MISSING_HEADING not in only_provenance
-    assert "the 21-day deadline" in mixed
-    assert "Article 8 citation" not in mixed
+    # Provenance is nobody's business but ours: it never buys a call, never costs prose.
+    assert supervisor._buys_repair(provenance) == []
+    assert supervisor._must_fall_back(provenance) == []
+
+    # An omission is worth one rewrite, and never worth the prose.
+    assert supervisor._buys_repair([omission]) == [omission]
+    assert supervisor._must_fall_back([omission]) == []
+
+    # A falsehood is worth both.
+    assert supervisor._buys_repair([falsehood]) == [falsehood]
+    assert supervisor._must_fall_back([falsehood]) == [falsehood]
+
+    # Silence about these two reads as a complete answer, which is the wrong belief
+    # exactly - a room the passenger thinks is held, rules we do not actually hold.
+    for promoted in ("room availability is not confirmed", supervisor.COVERAGE_ISSUE):
+        assert supervisor._must_fall_back([promoted]) == [promoted]
+
+
+def test_the_passenger_never_sees_a_block_of_the_guards_own_labels():
+    """The bug this whole routing split exists to make impossible."""
+    import inspect
+
+    source = inspect.getsource(supervisor)
+
+    assert "Also from your findings" not in source
+    assert not hasattr(supervisor, "_with_missing")
+    assert not hasattr(supervisor, "MISSING_HEADING")
 
 
 def test_the_composer_rejects_recommending_an_urgent_flight_over_the_safe_choice():
